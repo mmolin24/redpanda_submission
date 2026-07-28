@@ -1,0 +1,17 @@
+# Keep Connect ready for observability while emitting each bounded fixture
+# document only once per process. The counter resets only when the process does.
+let emission = counter()
+let scenario = env("SOURCE_FIXTURE_SCENARIO").or("ingestion-relevance")
+root = if $scenario == "exact-release-missing" && $emission == 1 {
+  file("/data/fixtures/exact-release-missing.xml")
+} else if $scenario == "exact-release-missing" {
+  deleted()
+} else if $scenario == "ingestion-relevance" && $emission == 1 {
+  file("/data/fixtures/pypi-updates.xml")
+} else if $scenario == "ingestion-relevance" && $emission == 2 {
+  file("/data/fixtures/malformed-pypi-updates.xml")
+} else if $scenario == "ingestion-relevance" {
+  deleted()
+} else {
+  throw("unsupported source fixture scenario")
+}

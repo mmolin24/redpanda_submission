@@ -1,0 +1,24 @@
+{
+  "packages": [
+    "aiobotocore",
+    "boto3",
+    "botocore",
+    "certifi",
+    "cffi",
+    "charset-normalizer",
+    "cryptography",
+    "idna",
+    "numpy",
+    "packaging",
+    "pluggy",
+    "pydantic",
+    "pygments",
+    "python-dateutil",
+    "pyyaml",
+    "requests",
+    "setuptools",
+    "six",
+    "typing-extensions",
+    "urllib3"
+  ]
+}

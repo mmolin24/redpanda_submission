@@ -1,0 +1,80 @@
+{
+  "schema_version": "consumer-impact-eval.v2",
+  "cases": [
+    {
+      "id": "urllib3-python-floor",
+      "expected_pass": true,
+      "release_context": {"package": "urllib3", "candidate_version": "2.7.0"},
+      "applicability": {
+        "impact_conditions": ["A consumer attempts to install urllib3 2.7.0 on Python 3.9. Because urllib3 2.7.0 declares Requires-Python >=3.10, a metadata-aware installer rejects that release."],
+        "consumer_scenarios": [{
+          "headline": "Python 3.9 consumers cannot upgrade",
+          "statement": "A consumer attempts to install urllib3 2.7.0 on Python 3.9. Because urllib3 2.7.0 declares Requires-Python >=3.10, a metadata-aware installer rejects that release.",
+          "verification": "Check the target Python version before selecting urllib3 2.7.0.",
+          "evidence_ids": ["candidate.requires_python"],
+          "conditions": ["Python == 3.9"]
+        }]
+      }
+    },
+    {
+      "id": "reject-vague-release",
+      "expected_pass": false,
+      "release_context": {"package": "urllib3", "candidate_version": "2.7.0"},
+      "applicability": {
+        "impact_conditions": ["A consumer attempts to install the candidate release on Python 3.9. Because it declares Requires-Python >=3.10, a metadata-aware installer rejects that release."],
+        "consumer_scenarios": [{
+          "headline": "Python consumers should review",
+          "statement": "A consumer attempts to install the candidate release on Python 3.9. Because it declares Requires-Python >=3.10, a metadata-aware installer rejects that release.",
+          "verification": "Check the target Python version.",
+          "evidence_ids": ["candidate.requires_python"],
+          "conditions": ["Python == 3.9"]
+        }]
+      }
+    },
+    {
+      "id": "reject-internal-language",
+      "expected_pass": false,
+      "release_context": {"package": "requests", "candidate_version": "2.34.2"},
+      "applicability": {
+        "impact_conditions": ["A consumer installs requests 2.34.2 while refreshing dependencies. Because requests 2.34.2 changes a dependency requirement to urllib3 >=2.0, the deterministic pipeline predicts a different result."],
+        "consumer_scenarios": [{
+          "headline": "Eligible seed consumers",
+          "statement": "A consumer installs requests 2.34.2 while refreshing dependencies. Because requests 2.34.2 changes a dependency requirement to urllib3 >=2.0, the deterministic pipeline predicts a different result.",
+          "verification": "Inspect the internal pipeline before upgrading.",
+          "evidence_ids": ["computed.requires_dist"],
+          "conditions": ["Dependency refresh == true"]
+        }]
+      }
+    },
+    {
+      "id": "reject-missing-verification",
+      "expected_pass": false,
+      "release_context": {"package": "packaging", "candidate_version": "26.1"},
+      "applicability": {
+        "impact_conditions": ["A consumer installs packaging 26.1 on free-threaded Python. Because packaging 26.1 adds the Python 3.15 free-threading classifier, compatibility tools report that support."],
+        "consumer_scenarios": [{
+          "headline": "Free-threaded Python consumers",
+          "statement": "A consumer installs packaging 26.1 on free-threaded Python. Because packaging 26.1 adds the Python 3.15 free-threading classifier, compatibility tools report that support.",
+          "verification": "",
+          "evidence_ids": ["candidate.classifier"],
+          "conditions": ["Python free-threading == true"]
+        }]
+      }
+    },
+    {
+      "id": "reject-trigger-without-package-rule-or-outcome",
+      "expected_pass": false,
+      "release_context": {"package": "urllib3", "candidate_version": "2.7.0"},
+      "applicability": {
+        "impact_conditions": ["A consumer selects urllib3 2.7.0 while using Python 3.9 and an installer that enforces package metadata."],
+        "consumer_scenarios": [{
+          "headline": "Python 3.9 consumers cannot upgrade",
+          "statement": "A consumer selects urllib3 2.7.0 while using Python 3.9 and an installer that enforces package metadata.",
+          "verification": "Check the target Python version before selecting urllib3 2.7.0.",
+          "evidence_ids": ["candidate.requires_python"],
+          "conditions": ["Python == 3.9"]
+        }]
+      }
+    }
+  ]
+}

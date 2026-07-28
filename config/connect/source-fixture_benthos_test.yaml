@@ -1,0 +1,208 @@
+tests:
+  - name: monitored release becomes a normalized release event
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+    input_batch:
+      - content: |
+          <rss version="2.0"><channel><item><title>urllib3 2.7.0</title><link>https://pypi.org/project/urllib3/2.7.0/</link><pubDate>Tue, 21 Jul 2026 12:00:00 GMT</pubDate></item></channel></rss>
+    output_batches:
+      - - bloblang: 'this.schema_version == "release-event.v1" && this.event_key == "pypi:urllib3:2.7.0" && @target_topic == "pypi.releases.v1"'
+
+  - name: irrelevant release is intentionally removed
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+    input_batch:
+      - content: |
+          <rss version="2.0"><channel><item><title>unmonitored-example 1.0.0</title><link>https://pypi.org/project/unmonitored-example/1.0.0/</link><pubDate>Tue, 21 Jul 2026 12:00:00 GMT</pubDate></item></channel></rss>
+    output_batches: []
+
+  - name: invalid project link becomes an ingestion failure
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+    input_batch:
+      - content: |
+          <rss version="2.0"><channel><item><title>invalid</title><link>https://example.invalid/not-pypi</link><pubDate>Tue, 21 Jul 2026 12:00:00 GMT</pubDate></item></channel></rss>
+    output_batches:
+      - - bloblang: 'this.schema_version == "failure.v1" && this.error_class == "invalid_release_event" && this.payload.input_kind == "rss_item" && this.payload.content_type == "application/json" && this.payload.snapshot_base64.decode("base64").parse_json().link == "https://example.invalid/not-pypi" && this.failure_fingerprint == "sha256:" + ("ingestion\u0000invalid_release_event\u0000" + this.payload.content_sha256).hash("sha256").encode("hex") && @target_topic == "pypi.ingest-failures.v1" && !errored()'
+
+  - name: malformed XML becomes one bounded ingestion failure
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "8"
+    input_batch:
+      - content: '<rss><channel><item>unterminated'
+    output_batches:
+      - - bloblang: 'this.schema_version == "failure.v1" && this.error_class == "malformed_rss" && this.payload.input_kind == "rss_document" && this.payload.original_bytes > this.payload.captured_bytes && this.payload.captured_bytes == 8 && this.payload.snapshot_base64.decode("base64").length() == 8 && this.payload.truncated && this.failure_fingerprint == "sha256:" + ("ingestion\u0000malformed_rss\u0000" + this.payload.content_sha256).hash("sha256").encode("hex") && !errored()'
+
+  - name: malformed payload over 256 KiB retains full hash and bounded evidence
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+    input_batch:
+      - file_content: ./fixtures/malformed-rss-over-256k.xml
+    output_batches:
+      - - bloblang: 'this.schema_version == "failure.v1" && this.error_class == "malformed_rss" && this.payload.content_sha256 == file("/config/fixtures/malformed-rss-over-256k.xml").hash("sha256").encode("hex") && this.payload.original_bytes == file("/config/fixtures/malformed-rss-over-256k.xml").length() && this.payload.captured_bytes == 262144 && this.payload.snapshot_base64.decode("base64").length() == 262144 && this.payload.truncated && !errored()'
+
+  - name: invalid normalized release contract becomes an ingestion failure
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+    input_batch:
+      - content: |
+          <rss version="2.0"><channel><item><title>urllib3 invalid</title><link>https://pypi.org/project/urllib3/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/</link><pubDate>Tue, 21 Jul 2026 12:00:00 GMT</pubDate></item></channel></rss>
+    output_batches:
+      - - bloblang: 'this.schema_version == "failure.v1" && this.error_class == "invalid_release_event" && this.payload.input_kind == "rss_item" && @target_topic == "pypi.ingest-failures.v1" && !errored()'
+
+  - name: invalid unmonitored release contract is not deleted as irrelevant
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+    input_batch:
+      - content: |
+          <rss version="2.0"><channel><item><title>unmonitored invalid</title><link>https://pypi.org/project/unmonitored-example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/</link><pubDate>Tue, 21 Jul 2026 12:00:00 GMT</pubDate></item></channel></rss>
+    output_batches:
+      - - bloblang: 'this.schema_version == "failure.v1" && this.error_class == "invalid_release_event" && @target_topic == "pypi.ingest-failures.v1" && !errored()'
+
+  - name: missing monitored-package config remains a systemic processor error
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+      MONITORED_PACKAGES_PATH: "/data/does-not-exist.json"
+    input_batch:
+      - content: |
+          <rss version="2.0"><channel><item><title>urllib3 2.7.0</title><link>https://pypi.org/project/urllib3/2.7.0/</link><pubDate>Tue, 21 Jul 2026 12:00:00 GMT</pubDate></item></channel></rss>
+    output_batches:
+      - - bloblang: 'errored() && this.schema_version == "release-event.v1"'
+
+  - name: invalid history selection configuration remains a systemic error
+    target_processors: source-history.yaml#/pipeline/processors
+    environment:
+      HISTORY_RELEASES_PER_PACKAGE: "not-a-number"
+    input_batch:
+      - content: '[{"package":"urllib3"}]'
+    output_batches:
+      - - bloblang: 'errored() && this.package == "urllib3" && @target_topic.or("") != "pypi.ingest-failures.v1"'
+
+  - name: valid history selection configuration is normalized before HTTP
+    target_processors: history-config-validation-test.yaml#/pipeline/processors
+    environment:
+      HISTORY_RELEASES_PER_PACKAGE: "2"
+      HISTORY_TARGET_VERSIONS: "2.7.0,2.6.3"
+    input_batch:
+      - content: '{"package":"urllib3"}'
+    output_batches:
+      - - bloblang: '!errored() && @history_package == "urllib3" && @history_release_limit == "2" && @history_target_versions == "2.7.0,2.6.3"'
+
+  - name: zero history release limit remains a systemic error
+    target_processors: history-config-validation-test.yaml#/pipeline/processors
+    environment:
+      HISTORY_RELEASES_PER_PACKAGE: "0"
+    input_batch:
+      - content: '{"package":"urllib3"}'
+    output_batches:
+      - - bloblang: 'errored() && @target_topic.or("") != "pypi.ingest-failures.v1"'
+
+  - name: decimal history release limit remains a systemic error
+    target_processors: history-config-validation-test.yaml#/pipeline/processors
+    environment:
+      HISTORY_RELEASES_PER_PACKAGE: "2.5"
+    input_batch:
+      - content: '{"package":"urllib3"}'
+    output_batches:
+      - - bloblang: 'errored() && @target_topic.or("") != "pypi.ingest-failures.v1"'
+
+  - name: excessive history release limit remains a systemic error
+    target_processors: history-config-validation-test.yaml#/pipeline/processors
+    environment:
+      HISTORY_RELEASES_PER_PACKAGE: "101"
+    input_batch:
+      - content: '{"package":"urllib3"}'
+    output_batches:
+      - - bloblang: 'errored() && @target_topic.or("") != "pypi.ingest-failures.v1"'
+
+  - name: invalid history packages remain systemic errors
+    target_processors: history-config-validation-test.yaml#/pipeline/processors
+    environment:
+      HISTORY_RELEASES_PER_PACKAGE: "2"
+    input_batch:
+      - content: '{"package":"../admin"}'
+      - content: '{"package":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+    output_batches:
+      - - bloblang: 'errored() && this.package == "../admin" && @target_topic.or("") != "pypi.ingest-failures.v1"'
+        - bloblang: 'errored() && this.package.length() > 200 && @target_topic.or("") != "pypi.ingest-failures.v1"'
+
+  - name: empty history package remains a systemic error
+    target_processors: history-config-validation-test.yaml#/pipeline/processors
+    environment:
+      HISTORY_RELEASES_PER_PACKAGE: "2"
+    input_batch:
+      - content: '{"package":""}'
+    output_batches:
+      - - bloblang: 'errored() && this.package == "" && @target_topic.or("") != "pypi.ingest-failures.v1"'
+
+  - name: empty exact history selection remains a systemic error
+    target_processors: history-config-validation-test.yaml#/pipeline/processors
+    environment:
+      HISTORY_RELEASES_PER_PACKAGE: "2"
+      HISTORY_TARGET_VERSIONS: ",, "
+    input_batch:
+      - content: '{"package":"urllib3"}'
+    output_batches:
+      - - bloblang: 'errored() && @target_topic.or("") != "pypi.ingest-failures.v1"'
+
+  - name: oversized exact history selection remains a systemic error
+    target_processors: history-config-validation-test.yaml#/pipeline/processors
+    environment:
+      HISTORY_RELEASES_PER_PACKAGE: "2"
+      HISTORY_TARGET_VERSIONS: "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv"
+    input_batch:
+      - content: '{"package":"urllib3"}'
+    output_batches:
+      - - bloblang: 'errored() && @target_topic.or("") != "pypi.ingest-failures.v1"'
+
+  - name: corrupt monitored-package config remains a systemic processor error
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+      MONITORED_PACKAGES_PATH: "/config/fixtures/corrupt-monitored-packages.json"
+    input_batch:
+      - content: |
+          <rss version="2.0"><channel><item><title>urllib3 2.7.0</title><link>https://pypi.org/project/urllib3/2.7.0/</link><pubDate>Tue, 21 Jul 2026 12:00:00 GMT</pubDate></item></channel></rss>
+    output_batches:
+      - - bloblang: 'errored() && @target_topic.or("") != "pypi.ingest-failures.v1"'
+
+  - name: empty monitored-package config remains a systemic processor error
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+      MONITORED_PACKAGES_PATH: "/config/fixtures/empty-monitored-packages.json"
+    input_batch:
+      - content: |
+          <rss version="2.0"><channel><item><title>urllib3 2.7.0</title><link>https://pypi.org/project/urllib3/2.7.0/</link><pubDate>Tue, 21 Jul 2026 12:00:00 GMT</pubDate></item></channel></rss>
+    output_batches:
+      - - bloblang: 'errored() && @target_topic.or("") != "pypi.ingest-failures.v1"'
+
+  - name: duplicate monitored-package config remains a systemic processor error
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+      MONITORED_PACKAGES_PATH: "/config/fixtures/duplicate-monitored-packages.json"
+    input_batch:
+      - content: |
+          <rss version="2.0"><channel><item><title>urllib3 2.7.0</title><link>https://pypi.org/project/urllib3/2.7.0/</link><pubDate>Tue, 21 Jul 2026 12:00:00 GMT</pubDate></item></channel></rss>
+    output_batches:
+      - - bloblang: 'errored() && @target_topic.or("") != "pypi.ingest-failures.v1"'
+
+  - name: schema-invalid monitored-package config remains a systemic processor error
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+      MONITORED_PACKAGES_PATH: "/config/fixtures/schema-invalid-monitored-packages.json"
+    input_batch:
+      - content: |
+          <rss version="2.0"><channel><item><title>urllib3 2.7.0</title><link>https://pypi.org/project/urllib3/2.7.0/</link><pubDate>Tue, 21 Jul 2026 12:00:00 GMT</pubDate></item></channel></rss>
+    output_batches:
+      - - bloblang: 'errored() && @target_topic.or("") != "pypi.ingest-failures.v1"'

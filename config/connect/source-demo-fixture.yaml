@@ -1,0 +1,69 @@
+error_handling:
+  strict: true
+
+# The assessment demo publishes exactly the two checked-in RSS documents and
+# then exits. Downstream Compose gates, not source readiness, decide when the
+# live feed may start.
+input:
+  generate:
+    interval: 100ms
+    count: 2
+    auto_replay_nacks: true
+    mapping: 'from "/config/fixture-once.blobl"'
+
+pipeline:
+  threads: 1
+  processors:
+    - resource: source_ingestion_pipeline
+
+output:
+  retry:
+    max_retries: 0
+    backoff:
+      initial_interval: 500ms
+      max_interval: 30s
+      max_elapsed_time: 0s
+    output:
+      label: source_redpanda_delivery
+      redpanda:
+        seed_brokers: [ '${SOURCE_REDPANDA_BROKERS:redpanda:9092}' ]
+        topic: ${! metadata("target_topic") }
+        key: ${! metadata("kafka_key") }
+        metadata:
+          include_patterns: [ "^(traceparent|tracestate)$" ]
+        inject_tracing_map: 'meta = @.merge(this)'
+        idempotent_write: true
+        acks: all
+        compression: zstd
+        allow_auto_topic_creation: false
+        max_in_flight_requests: 1
+        record_retries: 0
+        record_delivery_timeout: 0s
+
+cache_resources:
+  - label: ingest_dedupe
+    memory:
+      compaction_interval: ""
+
+metrics:
+  prometheus: {}
+
+logger:
+  level: INFO
+  format: json
+  add_timestamp: true
+  static_fields:
+    service.name: connect-fixture
+
+tracer:
+  redpanda:
+    seed_brokers: [ redpanda:9092 ]
+    topic: otel-traces
+    format: json
+    service: connect-fixture
+    tags:
+      deployment.environment: local
+    sampling:
+      enabled: true
+      ratio: 1.0
+    allow_auto_topic_creation: false

@@ -1,0 +1,74 @@
+name: Continuous integration
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+  validate:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the prospective tree
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          clean: true
+          fetch-depth: 1
+          lfs: false
+          persist-credentials: false
+          submodules: false
+      - name: Install Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12.13"
+      - name: Install Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.23.1"
+          package-manager-cache: false
+      - name: Install pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          cache: false
+          run_install: false
+          version: "11.0.8"
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: false
+          prune-cache: false
+          version: "0.11.11"
+      - name: Install web dependencies
+        run: pnpm --dir web install --frozen-lockfile
+      - name: Run focused checks
+        env:
+          MODEL_MODE: fake
+          OBS_CAPTURE_MODEL_PAYLOADS: "false"
+          OPENAI_API_KEY: ""
+          OPENAI_PROMPT_CACHE_ENABLED: "false"
+          SOURCE_CONFIG: source-fixture.yaml
+        run: make check
+      - name: Run the bounded service smoke test
+        env:
+          MODEL_MODE: fake
+          OBS_CAPTURE_MODEL_PAYLOADS: "false"
+          OPENAI_API_KEY: ""
+          OPENAI_PROMPT_CACHE_ENABLED: "false"
+          SOURCE_CONFIG: source-fixture.yaml
+        run: make smoke

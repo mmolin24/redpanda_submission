@@ -1,0 +1,88 @@
+input:
+  redpanda:
+    seed_brokers: [ redpanda:9092 ]
+    topics: [ otel-traces ]
+    consumer_group: pypi-connect-trace-bridge-v1
+    client_id: connect-trace-bridge
+    start_offset: earliest
+    auto_replay_nacks: true
+    commit_period: 1s
+
+pipeline:
+  processors:
+    - label: wrap_flattened_span_as_otlp_export
+      mapping: |
+        let span_json = this.without(
+          "resource",
+          "resource_schema_url",
+          "scope",
+          "trace_id",
+          "span_id",
+          "parent_span_id"
+        ).format_json(no_indent: true)
+        let span_json_1 = $span_json.replace_all("\"start_time_unix_nano\"", "\"startTimeUnixNano\"")
+        let span_json_2 = $span_json_1.replace_all("\"end_time_unix_nano\"", "\"endTimeUnixNano\"")
+        let span_json_3 = $span_json_2.replace_all("\"string_value\"", "\"stringValue\"")
+        let span_json_4 = $span_json_3.replace_all("\"bool_value\"", "\"boolValue\"")
+        let span_json_5 = $span_json_4.replace_all("\"int_value\"", "\"intValue\"")
+        let span_json_6 = $span_json_5.replace_all("\"double_value\"", "\"doubleValue\"")
+        let span_json_7 = $span_json_6.replace_all("\"bytes_value\"", "\"bytesValue\"")
+        let span_json_8 = $span_json_7.replace_all("\"array_value\"", "\"arrayValue\"")
+        let span_json_9 = $span_json_8.replace_all("\"kvlist_value\"", "\"kvlistValue\"")
+        let span = $span_json_9.parse_json()
+        let resource_json = this.resource.format_json(no_indent: true)
+        let resource_json_1 = $resource_json.replace_all("\"string_value\"", "\"stringValue\"")
+        let resource_json_2 = $resource_json_1.replace_all("\"bool_value\"", "\"boolValue\"")
+        let resource_json_3 = $resource_json_2.replace_all("\"int_value\"", "\"intValue\"")
+        let resource_json_4 = $resource_json_3.replace_all("\"double_value\"", "\"doubleValue\"")
+        let resource_json_5 = $resource_json_4.replace_all("\"bytes_value\"", "\"bytesValue\"")
+        let resource_json_6 = $resource_json_5.replace_all("\"array_value\"", "\"arrayValue\"")
+        let resource_json_7 = $resource_json_6.replace_all("\"kvlist_value\"", "\"kvlistValue\"")
+        let resource = $resource_json_7.parse_json()
+        let otlp_span = $span.merge({
+          "traceId": this.trace_id.decode("base64").encode("hex"),
+          "spanId": this.span_id.decode("base64").encode("hex"),
+          "parentSpanId": if this.parent_span_id != null {
+            this.parent_span_id.decode("base64").encode("hex")
+          } else {
+            deleted()
+          }
+        })
+        root = {
+          "resourceSpans": [{
+            "resource": $resource,
+            "schemaUrl": this.resource_schema_url.or(""),
+            "scopeSpans": [{
+              "scope": this.scope,
+              "spans": [$otlp_span]
+            }]
+          }]
+        }
+
+output:
+  http_client:
+    url: http://alloy:4318/v1/traces
+    verb: POST
+    headers:
+      Content-Type: application/json
+    timeout: 10s
+    retry_period: 1s
+    max_retry_backoff: 30s
+    retries: 0
+
+http:
+  enabled: true
+  address: 0.0.0.0:4197
+
+metrics:
+  prometheus:
+    add_process_metrics: true
+    add_go_metrics: true
+    use_histogram_timing: true
+
+logger:
+  level: INFO
+  format: json
+  add_timestamp: true
+  static_fields:
+    service.name: connect-trace-bridge

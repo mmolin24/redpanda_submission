@@ -1,0 +1,46 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    deployment_environment: local
+
+rule_files:
+  - /etc/prometheus/alerts.yaml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [ prometheus:9090 ]
+
+  - job_name: redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - targets: [ redpanda:9644 ]
+
+  - job_name: connect-source
+    static_configs:
+      - targets: [ connect-source:4195 ]
+
+  - job_name: connect-sink
+    static_configs:
+      - targets: [ connect-sink:4196 ]
+
+  - job_name: connect-trace-bridge
+    static_configs:
+      - targets: [ connect-trace-bridge:4197 ]
+
+  - job_name: reasoning-worker
+    static_configs:
+      - targets: [ reasoning-worker:8001 ]
+
+  - job_name: postgres-exporter
+    static_configs:
+      - targets: [ postgres-exporter:9187 ]
+
+  - job_name: tempo
+    static_configs:
+      - targets: [ tempo:3200 ]
+
+  - job_name: alloy
+    static_configs:
+      - targets: [ alloy:12345 ]

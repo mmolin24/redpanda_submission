@@ -1,0 +1,189 @@
+rule_files:
+  - alerts.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - name: reasoning backpressure is not reported as a terminal failure
+    interval: 1m
+    input_series:
+      - series: 'pypi_reasoning_backpressure_total{job="reasoning-worker",kind="transient"}'
+        values: '0 1 1'
+      - series: 'pypi_reasoning_messages_total{job="reasoning-worker",outcome="failure"}'
+        values: '0 0 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ReasoningBackpressure
+        exp_alerts:
+          - exp_labels:
+              job: reasoning-worker
+              kind: transient
+              severity: critical
+            exp_annotations:
+              summary: Reasoning stopped before acknowledging a release
+              description: The source offset remains uncommitted. The worker must recover before this release can advance.
+
+  - name: acknowledged oversized terminal replacement is a warning
+    interval: 1m
+    input_series:
+      - series: 'pypi_reasoning_terminal_oversize_total{job="reasoning-worker",original_type="finding"}'
+        values: '0 1 1'
+      - series: 'pypi_reasoning_backpressure_total{job="reasoning-worker",kind="systemic"}'
+        values: '0 0 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ReasoningTerminalOversize
+        exp_alerts:
+          - exp_labels:
+              job: reasoning-worker
+              original_type: finding
+              severity: warning
+            exp_annotations:
+              summary: An oversized reasoning result was sent to the failure topic
+              description: Redpanda broker acknowledged the bounded failure record; Postgres persistence is not yet confirmed.
+      - eval_time: 1m
+        alertname: ReasoningBackpressure
+        exp_alerts: []
+
+  - name: ingestion DLQ activity is a record-level warning
+    interval: 1m
+    input_series:
+      - series: 'pypi_ingest_dlq_total{job="connect-source",error_class="malformed_rss"}'
+        values: '0 1 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: IngestionDlqActivity
+        exp_alerts:
+          - exp_labels:
+              job: connect-source
+              error_class: malformed_rss
+              severity: warning
+            exp_annotations:
+              summary: A valid source failure entered the DLQ publication path
+              description: The failure envelope is inside retry-protected DLQ publication. Delivery and persistence are not yet confirmed.
+
+  - name: sustained source output errors warn without manufacturing DLQ activity
+    interval: 30s
+    input_series:
+      - series: 'output_error{job="connect-source",label="source_redpanda_delivery"}'
+        values: '0 1 2 3 4 5 6'
+      - series: 'up{job="connect-source"}'
+        values: '1 1 1 1 1 1 1'
+      - series: 'up{job="redpanda"}'
+        values: '1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SourceOutputErrorsPersistent
+        exp_alerts:
+          - exp_labels:
+              job: connect-source
+              severity: warning
+            exp_annotations:
+              summary: Source output errors have persisted for two minutes
+              description: Records are under output retry/backpressure; this is not successful dead-lettering.
+      - eval_time: 3m
+        alertname: IngestionDlqActivity
+        exp_alerts: []
+
+  - name: a stopped source suppresses the output connection critical
+    interval: 30s
+    input_series:
+      - series: 'output_connection_failed{job="connect-source",label="source_redpanda_delivery"}'
+        values: '0 1 2 3 4 5 6'
+      - series: 'up{job="connect-source"}'
+        values: '0 0 0 0 0 0 0'
+      - series: 'up{job="redpanda"}'
+        values: '1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SourceOutputConnectionFailures
+        exp_alerts: []
+
+  - name: a running source with sustained connection failures is critical
+    interval: 30s
+    input_series:
+      - series: 'output_connection_failed{job="connect-source",label="source_redpanda_delivery"}'
+        values: '0 1 2 3 4 5 6'
+      - series: 'up{job="connect-source"}'
+        values: '1 1 1 1 1 1 1'
+      - series: 'up{job="redpanda"}'
+        values: '1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SourceOutputConnectionFailures
+        exp_alerts:
+          - exp_labels:
+              job: connect-source
+              severity: critical
+            exp_annotations:
+              summary: Source is running but cannot connect to Redpanda
+              description: Records remain pending behind the source output retry boundary.
+
+  - name: source-only pending acknowledgement gap triggers warning and critical alerts
+    interval: 30s
+    input_series:
+      - series: 'pypi_source_delivery_ready_total{job="connect-source"}'
+        values: '0 1 1 1 1 1 1'
+      - series: 'output_sent{job="connect-source",label="source_redpanda_delivery"}'
+        values: '0 0 0 0 0 0 0'
+      - series: 'up{job="connect-source"}'
+        values: '1 1 1 1 1 1 1'
+      - series: 'up{job="redpanda"}'
+        values: '1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SourceOutputErrorsPersistent
+        exp_alerts:
+          - exp_labels:
+              job: connect-source
+              severity: warning
+            exp_annotations:
+              summary: Source output errors have persisted for two minutes
+              description: Records are under output retry/backpressure; this is not successful dead-lettering.
+      - eval_time: 3m
+        alertname: SourceOutputConnectionFailures
+        exp_alerts:
+          - exp_labels:
+              job: connect-source
+              severity: critical
+            exp_annotations:
+              summary: Source is running but cannot connect to Redpanda
+              description: Records remain pending behind the source output retry boundary.
+
+  - name: a broker outage is critical while the source process remains scrapeable
+    interval: 1m
+    input_series:
+      - series: 'up{job="redpanda"}'
+        values: '0 0 0 0'
+      - series: 'up{job="connect-source"}'
+        values: '1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SourceOutputConnectionFailures
+        exp_alerts:
+          - exp_labels:
+              job: connect-source
+              severity: critical
+            exp_annotations:
+              summary: Source is running but cannot connect to Redpanda
+              description: Records remain pending behind the source output retry boundary.
+
+  - name: simultaneous client and broker signals produce one critical alert
+    interval: 30s
+    input_series:
+      - series: 'output_connection_failed{job="connect-source",label="source_redpanda_delivery"}'
+        values: '0 1 2 3 4 5 6'
+      - series: 'up{job="redpanda"}'
+        values: '0 0 0 0 0 0 0'
+      - series: 'up{job="connect-source"}'
+        values: '1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SourceOutputConnectionFailures
+        exp_alerts:
+          - exp_labels:
+              job: connect-source
+              severity: critical
+            exp_annotations:
+              summary: Source is running but cannot connect to Redpanda
+              description: Records remain pending behind the source output retry boundary.

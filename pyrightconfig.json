@@ -1,0 +1,45 @@
+{
+  "include": [
+    "scripts",
+    "services/api/app",
+    "services/reasoning/src",
+    "tests"
+  ],
+  "exclude": [
+    "**/.venv",
+    "**/__pycache__",
+    ".git",
+    ".uv-cache",
+    "data",
+    "web"
+  ],
+  "executionEnvironments": [
+    {
+      "root": "services/reasoning",
+      "extraPaths": ["services/reasoning/src"]
+    },
+    {
+      "root": "services/api",
+      "extraPaths": ["services/api"]
+    },
+    {
+      "root": "scripts",
+      "extraPaths": ["services/reasoning/src", "services/api"]
+    },
+    {
+      "root": "tests",
+      "extraPaths": [
+        ".",
+        "services/reasoning/src",
+        "services/api",
+        "tests/reasoning"
+      ]
+    }
+  ],
+  "pythonPlatform": "Linux",
+  "pythonVersion": "3.12",
+  "reportMissingImports": "error",
+  "reportMissingTypeStubs": "none",
+  "reportUnnecessaryTypeIgnoreComment": "error",
+  "typeCheckingMode": "standard"
+}

@@ -1,0 +1,104 @@
+error_handling:
+  strict: true
+
+input:
+  generate:
+    # Emit the monitored package set once at startup and then refresh daily.
+    # The in-process event-key cache removes repeats within one Connect run.
+    interval: 24h
+    count: 0
+    auto_replay_nacks: true
+    mapping: |
+      root = env("HISTORY_PACKAGES").or("urllib3,requests,python-dateutil").split(",").map_each(name -> {"package": name.trim()})
+
+pipeline:
+  threads: 1
+  processors:
+    - label: split_history_packages
+      unarchive:
+        format: json_array
+    - resource: source_validate_history_configuration
+    # `try` skips HTTP and record parsing when the configuration resource marks
+    # a package input errored, preserving nack/backpressure semantics.
+    - try:
+        - label: fetch_project_release_feed
+          http:
+            url: https://pypi.org/rss/project/${! meta("history_package") }/releases.xml
+            verb: GET
+            headers:
+              User-Agent: pypi-change-intelligence/1.0 (+local take-home)
+              Accept: application/rss+xml, application/xml;q=0.9
+            timeout: 15s
+            retries: 3
+            retry_period: 2s
+            max_retry_backoff: 30s
+            rate_limit: history_fetch
+            parallel: false
+        - resource: source_ingestion_pipeline
+
+output:
+  retry:
+    max_retries: 0
+    backoff:
+      initial_interval: 500ms
+      max_interval: 30s
+      max_elapsed_time: 0s
+    output:
+      label: source_redpanda_delivery
+      redpanda:
+        seed_brokers: [ '${SOURCE_REDPANDA_BROKERS:redpanda:9092}' ]
+        topic: ${! metadata("target_topic") }
+        key: ${! metadata("kafka_key") }
+        metadata:
+          include_patterns: [ "^(traceparent|tracestate)$" ]
+        # Retry receives the processed record and never re-enters source relevance filtering.
+        inject_tracing_map: 'meta = @.merge(this)'
+        idempotent_write: true
+        acks: all
+        compression: zstd
+        allow_auto_topic_creation: false
+        max_in_flight_requests: 1
+        record_retries: 0
+        record_delivery_timeout: 0s
+
+cache_resources:
+  - label: ingest_dedupe
+    memory:
+      compaction_interval: ""
+
+rate_limit_resources:
+  - label: history_fetch
+    local:
+      count: 1
+      interval: 1s
+
+http:
+  enabled: true
+  address: 0.0.0.0:4195
+
+metrics:
+  prometheus:
+    add_process_metrics: true
+    add_go_metrics: true
+    use_histogram_timing: true
+
+logger:
+  level: INFO
+  format: json
+  add_timestamp: true
+  static_fields:
+    service.name: connect-source
+
+tracer:
+  redpanda:
+    seed_brokers: [ redpanda:9092 ]
+    topic: otel-traces
+    format: json
+    service: connect-source
+    tags:
+      deployment.environment: local
+      source.mode: project-history
+    sampling:
+      enabled: true
+      ratio: 1.0
+    allow_auto_topic_creation: false

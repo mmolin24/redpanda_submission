@@ -1,0 +1,467 @@
+error_handling:
+  strict: true
+
+input:
+  redpanda:
+    seed_brokers: [ '${SINK_REDPANDA_BROKERS:redpanda:9092}' ]
+    topics:
+      - pypi.findings.v1
+      - pypi.failures.v1
+      - pypi.ingest-failures.v1
+    consumer_group: pypi-postgres-sink-v1
+    client_id: connect-sink
+    start_offset: earliest
+    auto_replay_nacks: true
+    commit_period: 1s
+    transaction_isolation_level: read_committed
+    # extract_tracing_map is evaluated once for each yielded batch. A one-byte
+    # ceiling still admits one complete record, while preventing unrelated
+    # terminal records from inheriting the first record's trace context.
+    max_yield_batch_bytes: 1B
+    extract_tracing_map: |
+      root.traceparent = @traceparent
+      root.tracestate = @tracestate.or(deleted())
+
+pipeline:
+  threads: 1
+  processors:
+    - label: validate_terminal_contract
+      switch:
+        - check: this.schema_version == "finding.v1"
+          processors:
+            - json_schema:
+                schema_path: file:///schemas/finding.schema.json
+        - check: this.schema_version == "failure.v1" && metadata("kafka_topic") == "pypi.ingest-failures.v1"
+          processors:
+            - json_schema:
+                schema_path: file:///schemas/ingest-failure.schema.json
+        - check: this.schema_version == "failure.v1"
+          processors:
+            - json_schema:
+                schema_path: file:///schemas/failure.schema.json
+        - processors:
+            - metric:
+                type: counter
+                name: pypi_sink_invalid_terminal_total
+                value: 1
+            - mapping: 'root = throw("unsupported terminal schema_version")'
+    - label: attach_redpanda_lineage
+      mapping: |
+        let persistence_time = now().ts_format("2006-01-02T15:04:05.999999999Z07:00")
+        let raw_failure = if this.schema_version == "failure.v1" { content().string() } else { null }
+        root = this
+        root._lineage = {
+          "source_topic": metadata("kafka_topic"),
+          "source_partition": metadata("kafka_partition").number(),
+          "source_offset": metadata("kafka_offset").number(),
+          "broker_timestamp": metadata("kafka_timestamp_ms").number().ts_format("2006-01-02T15:04:05.999Z").catch(null),
+          "persisted_at": $persistence_time,
+          "raw_failure": $raw_failure
+        }
+        root.observability.stage_summary = this.observability.stage_summary.concat([
+          {
+            "stage": "sink_validation",
+            "started_at": $persistence_time,
+            "completed_at": $persistence_time,
+            "outcome": "completed",
+            "attempt": 1,
+            "detail": "terminal_contract_valid"
+          },
+          {
+            # This candidate entry only becomes observable if sql_raw commits
+            # the transaction containing the same stage_summary value.
+            "stage": "postgres",
+            "started_at": $persistence_time,
+            "completed_at": $persistence_time,
+            "outcome": "completed",
+            "attempt": 1,
+            "detail": "commit_proven_by_persisted_row"
+          }
+        ])
+    - label: persistence_metric
+      metric:
+        type: counter
+        name: pypi_sink_messages_total
+        labels:
+          schema_version: ${! this.schema_version }
+          source_topic: ${! this._lineage.source_topic }
+        value: 1
+
+output:
+  switch:
+    retry_until_success: true
+    cases:
+      - check: this.schema_version == "finding.v1"
+        output:
+          sql_raw:
+            driver: postgres
+            dsn: ${DATABASE_URL}
+            queries:
+              - query: |
+                  INSERT INTO release_events (event_key, package_name, version, published_at, ingested_at, raw_event)
+                  VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+                  ON CONFLICT (event_key) DO UPDATE SET
+                    package_name = EXCLUDED.package_name,
+                    version = EXCLUDED.version,
+                    published_at = EXCLUDED.published_at,
+                    ingested_at = EXCLUDED.ingested_at,
+                    raw_event = EXCLUDED.raw_event;
+                args_mapping: |
+                  root = [
+                    this.source_event.event_key,
+                    this.source_event.package.normalized_name,
+                    this.source_event.release.version,
+                    this.source_event.release.published_at,
+                    this.source_event.ingested_at,
+                    this.source_event.format_json()
+                  ]
+              - query: |
+                  INSERT INTO analysis_runs (
+                    finding_id, event_key, analysis_version, disposition, analysis_method,
+                    processing_priority,
+                    reasoning_complexity, materiality_decision, materiality_confidence,
+                    applicability_confidence, publishable, model_calls, gate_results, source_topic,
+                    source_partition, source_offset, broker_timestamp, persisted_at, created_at,
+                    analysis_trace_id, analysis_span_id, trace_flags, tracestate, stage_summary, raw_finding
+                  ) VALUES (
+                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13::jsonb,$14,$15,$16,$17,$18,
+                    $19,$20,$21,$22,$23,$24::jsonb,$25::jsonb
+                  )
+                  ON CONFLICT (event_key, analysis_version) DO UPDATE SET
+                    disposition = EXCLUDED.disposition,
+                    analysis_method = EXCLUDED.analysis_method,
+                    publishable = EXCLUDED.publishable,
+                    model_calls = EXCLUDED.model_calls,
+                    gate_results = EXCLUDED.gate_results,
+                    source_topic = EXCLUDED.source_topic,
+                    source_partition = EXCLUDED.source_partition,
+                    source_offset = EXCLUDED.source_offset,
+                    broker_timestamp = EXCLUDED.broker_timestamp,
+                    persisted_at = EXCLUDED.persisted_at,
+                    analysis_trace_id = EXCLUDED.analysis_trace_id,
+                    analysis_span_id = EXCLUDED.analysis_span_id,
+                    trace_flags = EXCLUDED.trace_flags,
+                    tracestate = EXCLUDED.tracestate,
+                    stage_summary = EXCLUDED.stage_summary,
+                    raw_finding = EXCLUDED.raw_finding;
+                args_mapping: |
+                  root = [
+                    this.finding_id, this.event_key, this.analysis_metadata.analysis_version,
+                    this.disposition, this.analysis_method,
+                    this.routing.processing_priority.or(null),
+                    this.routing.reasoning_complexity.or(null),
+                    this.gate_results.materiality.decision.or(null),
+                    this.gate_results.materiality.confidence.or(null),
+                    this.gate_results.applicability.confidence.or(null),
+                    this.publishable,
+                    this.analysis_metadata.model_calls.format_json(), this.gate_results.format_json(),
+                    this._lineage.source_topic, this._lineage.source_partition, this._lineage.source_offset,
+                    this._lineage.broker_timestamp, this._lineage.persisted_at,
+                    this.analysis_metadata.completed_at, this.observability.analysis_trace_id,
+                    this.observability.analysis_span_id, this.observability.trace_flags,
+                    this.observability.tracestate, this.observability.stage_summary.format_json(),
+                    this.without("_lineage").format_json()
+                  ]
+              - query: |
+                  INSERT INTO analysis_attempts (
+                    processing_attempt_id, finding_id, event_key, analysis_trace_id, analysis_span_id,
+                    trace_flags, tracestate, outcome, stage_summary, source_topic, source_partition,
+                    source_offset, started_at, completed_at, raw_attempt
+                  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15::jsonb)
+                  ON CONFLICT (processing_attempt_id) DO UPDATE SET
+                    outcome = EXCLUDED.outcome,
+                    stage_summary = EXCLUDED.stage_summary,
+                    completed_at = EXCLUDED.completed_at,
+                    raw_attempt = EXCLUDED.raw_attempt;
+                args_mapping: |
+                  root = [
+                    this.observability.processing_attempt_id, this.finding_id, this.event_key,
+                    this.observability.analysis_trace_id, this.observability.analysis_span_id,
+                    this.observability.trace_flags, this.observability.tracestate, this.disposition,
+                    this.observability.stage_summary.format_json(), this._lineage.source_topic,
+                    this._lineage.source_partition, this._lineage.source_offset,
+                    this.analysis_metadata.started_at, this.analysis_metadata.completed_at,
+                    this.without("_lineage").format_json()
+                  ]
+              - query: |
+                  INSERT INTO model_calls (
+                    model_call_id, processing_attempt_id, logical_purpose, physical_attempt,
+                    analysis_trace_id, span_id, client_request_id, openai_request_id, response_id,
+                    requested_model, returned_model, requested_service_tier, returned_service_tier,
+                    reasoning_effort, outcome, request_payload, response_payload, request_sha256,
+                    response_sha256, input_tokens, cached_input_tokens, cache_write_tokens,
+                    output_tokens, reasoning_tokens,
+                    estimated_cost_usd, cost_table_version, client_duration_ms, openai_processing_ms,
+                    started_at, completed_at
+                  )
+                  SELECT
+                    call->>'model_call_id', $1, call->>'purpose', (attempt->>'attempt_number')::integer,
+                    $2, call->>'span_id', (attempt->>'client_request_id')::uuid, attempt->>'openai_request_id',
+                    attempt->>'response_id', call->>'requested_model',
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN call->>'returned_model' END,
+                    call->>'requested_service_tier',
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN call->>'returned_service_tier' END,
+                    call->>'reasoning_effort', coalesce(attempt->>'outcome', call->>'outcome'),
+                    nullif(call->'request_payload', 'null'::jsonb),
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN nullif(call->'response_payload', 'null'::jsonb) END,
+                    call->>'request_sha256',
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN call->>'response_sha256' END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->'usage'->>'input_tokens')::integer, 0) ELSE 0 END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->'usage'->>'cached_input_tokens')::integer, 0) ELSE 0 END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->'usage'->>'cache_write_tokens')::integer, 0) ELSE 0 END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->'usage'->>'output_tokens')::integer, 0) ELSE 0 END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->'usage'->>'reasoning_tokens')::integer, 0) ELSE 0 END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->>'estimated_cost_usd')::numeric, 0) ELSE 0 END,
+                    call->>'price_table_version',
+                    round(coalesce((attempt->>'latency_ms')::numeric, 0))::integer,
+                    round((attempt->>'openai_processing_ms')::numeric)::integer,
+                    (attempt->>'started_at')::timestamptz, (attempt->>'completed_at')::timestamptz
+                  FROM jsonb_array_elements(
+                    CASE WHEN jsonb_typeof($3::jsonb) = 'array' THEN $3::jsonb ELSE '[]'::jsonb END
+                  ) AS calls(call)
+                  CROSS JOIN LATERAL jsonb_array_elements(call->'attempts') AS attempts(attempt)
+                  ON CONFLICT (model_call_id, physical_attempt) DO UPDATE SET
+                    outcome = EXCLUDED.outcome,
+                    openai_request_id = EXCLUDED.openai_request_id,
+                    response_id = EXCLUDED.response_id,
+                    returned_model = EXCLUDED.returned_model,
+                    returned_service_tier = EXCLUDED.returned_service_tier,
+                    response_payload = EXCLUDED.response_payload,
+                    response_sha256 = EXCLUDED.response_sha256,
+                    input_tokens = EXCLUDED.input_tokens,
+                    cached_input_tokens = EXCLUDED.cached_input_tokens,
+                    cache_write_tokens = EXCLUDED.cache_write_tokens,
+                    output_tokens = EXCLUDED.output_tokens,
+                    reasoning_tokens = EXCLUDED.reasoning_tokens,
+                    estimated_cost_usd = EXCLUDED.estimated_cost_usd,
+                    client_duration_ms = EXCLUDED.client_duration_ms,
+                    openai_processing_ms = EXCLUDED.openai_processing_ms,
+                    completed_at = EXCLUDED.completed_at;
+                args_mapping: |
+                  root = [
+                    this.observability.processing_attempt_id,
+                    this.observability.analysis_trace_id,
+                    this.analysis_metadata.model_calls.format_json()
+                  ]
+              - query: |
+                  INSERT INTO findings (
+                    finding_id, package_name, baseline_version, candidate_version, change_types,
+                    assessment, evidence_bundle, limitations, published_at
+                  )
+                  SELECT $1,$2,$3,$4,$5::text[],$6,$7::jsonb,$8::jsonb,$9
+                  WHERE $10::boolean OR $11 = 'insufficient_evidence'
+                  ON CONFLICT (finding_id) DO UPDATE SET
+                    package_name = EXCLUDED.package_name,
+                    baseline_version = EXCLUDED.baseline_version,
+                    candidate_version = EXCLUDED.candidate_version,
+                    change_types = EXCLUDED.change_types,
+                    assessment = EXCLUDED.assessment,
+                    evidence_bundle = EXCLUDED.evidence_bundle,
+                    limitations = EXCLUDED.limitations,
+                    published_at = EXCLUDED.published_at;
+                args_mapping: |
+                  root = [
+                    this.finding_id, this.package, this.baseline_version, this.candidate_version,
+                    this.gate_results.materiality.change_types.or([]), this.gate_results.applicability.assessment.or(null),
+                    this.evidence_bundle.format_json(),
+                    this.gate_results.applicability.limitations.or([]).format_json(),
+                    this.analysis_metadata.completed_at, this.publishable, this.disposition
+                  ]
+      - check: this.schema_version == "failure.v1"
+        output:
+          sql_raw:
+            driver: postgres
+            dsn: ${DATABASE_URL}
+            queries:
+              - query: |
+                  INSERT INTO release_events (event_key, package_name, version, published_at, ingested_at, raw_event)
+                  SELECT $1, $2, $3, $4, $5, $6::jsonb
+                  WHERE $7::boolean
+                  ON CONFLICT (event_key) DO UPDATE SET
+                    package_name = EXCLUDED.package_name,
+                    version = EXCLUDED.version,
+                    published_at = EXCLUDED.published_at,
+                    ingested_at = EXCLUDED.ingested_at,
+                    raw_event = EXCLUDED.raw_event;
+                args_mapping: |
+                  root = [
+                    this.payload.source_event.event_key.or(null),
+                    this.payload.source_event.package.normalized_name.or(null),
+                    this.payload.source_event.release.version.or(null),
+                    this.payload.source_event.release.published_at.or(null),
+                    this.payload.source_event.ingested_at.or(null),
+                    this.payload.source_event.or({}).format_json(),
+                    this.payload.source_event != null
+                  ]
+              - query: |
+                  INSERT INTO processing_failures (
+                    failure_id, failure_fingerprint, event_key, stage, error_class, message,
+                    retryable, attempt_count, payload, first_failed_at, last_failed_at,
+                    next_retry_at, source_topic, source_partition, source_offset,
+                    analysis_trace_id, analysis_span_id, raw_failure
+                  ) VALUES (
+                    $1, $18,
+                    $2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb
+                  )
+                  ON CONFLICT (failure_id) DO UPDATE SET
+                    failure_fingerprint = EXCLUDED.failure_fingerprint,
+                    event_key = EXCLUDED.event_key,
+                    stage = EXCLUDED.stage,
+                    error_class = EXCLUDED.error_class,
+                    message = EXCLUDED.message,
+                    retryable = EXCLUDED.retryable,
+                    attempt_count = EXCLUDED.attempt_count,
+                    payload = EXCLUDED.payload,
+                    first_failed_at = LEAST(processing_failures.first_failed_at, EXCLUDED.first_failed_at),
+                    last_failed_at = GREATEST(processing_failures.last_failed_at, EXCLUDED.last_failed_at),
+                    next_retry_at = EXCLUDED.next_retry_at,
+                    source_topic = EXCLUDED.source_topic,
+                    source_partition = EXCLUDED.source_partition,
+                    source_offset = EXCLUDED.source_offset,
+                    analysis_trace_id = EXCLUDED.analysis_trace_id,
+                    analysis_span_id = EXCLUDED.analysis_span_id,
+                    raw_failure = EXCLUDED.raw_failure;
+                args_mapping: |
+                  root = [
+                    this.failure_id, this.event_key, this.stage, this.error_class, this.message,
+                    this.retryable, this.attempt_count, this.payload.format_json(), this.first_failed_at,
+                    this.last_failed_at, this.next_retry_at, this._lineage.source_topic,
+                    this._lineage.source_partition, this._lineage.source_offset,
+                    this.observability.analysis_trace_id, this.observability.analysis_span_id,
+                    this._lineage.raw_failure, this.failure_fingerprint
+                  ]
+              - query: |
+                  INSERT INTO analysis_attempts (
+                    processing_attempt_id, finding_id, failure_id, event_key, analysis_trace_id,
+                    analysis_span_id, trace_flags, tracestate, outcome, stage_summary, source_topic,
+                    source_partition, source_offset, started_at, completed_at, raw_attempt
+                  )
+                  SELECT $1,NULL,$2,$3,$4,$5,$6,$7,'failed',$8::jsonb,$9,$10,$11,$12,$13,$14::jsonb
+                  WHERE $15::boolean
+                  ON CONFLICT (processing_attempt_id) DO UPDATE SET
+                    failure_id = EXCLUDED.failure_id,
+                    outcome = EXCLUDED.outcome,
+                    stage_summary = EXCLUDED.stage_summary,
+                    completed_at = EXCLUDED.completed_at,
+                    raw_attempt = EXCLUDED.raw_attempt;
+                args_mapping: |
+                  root = [
+                    this.observability.processing_attempt_id, this.failure_id, this.event_key,
+                    this.observability.analysis_trace_id, this.observability.analysis_span_id,
+                    this.observability.trace_flags, this.observability.tracestate,
+                    this.observability.stage_summary.format_json(), this._lineage.source_topic,
+                    this._lineage.source_partition, this._lineage.source_offset,
+                    this.first_failed_at, this.last_failed_at,
+                    this.without("_lineage").format_json(), this.payload.source_event != null
+                  ]
+              - query: |
+                  INSERT INTO model_calls (
+                    model_call_id, processing_attempt_id, logical_purpose, physical_attempt,
+                    analysis_trace_id, span_id, client_request_id, openai_request_id, response_id,
+                    requested_model, returned_model, requested_service_tier, returned_service_tier,
+                    reasoning_effort, outcome, request_payload, response_payload, request_sha256,
+                    response_sha256, input_tokens, cached_input_tokens, cache_write_tokens,
+                    output_tokens, reasoning_tokens,
+                    estimated_cost_usd, cost_table_version, client_duration_ms, openai_processing_ms,
+                    started_at, completed_at
+                  )
+                  SELECT
+                    call->>'model_call_id', $1, call->>'purpose', (attempt->>'attempt_number')::integer,
+                    $2, call->>'span_id', (attempt->>'client_request_id')::uuid,
+                    attempt->>'openai_request_id', attempt->>'response_id', call->>'requested_model',
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN call->>'returned_model' END,
+                    call->>'requested_service_tier',
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN call->>'returned_service_tier' END,
+                    call->>'reasoning_effort',
+                    coalesce(attempt->>'outcome', call->>'outcome'),
+                    nullif(call->'request_payload', 'null'::jsonb),
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN nullif(call->'response_payload', 'null'::jsonb) END,
+                    call->>'request_sha256',
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN call->>'response_sha256' END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->'usage'->>'input_tokens')::integer, 0) ELSE 0 END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->'usage'->>'cached_input_tokens')::integer, 0) ELSE 0 END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->'usage'->>'cache_write_tokens')::integer, 0) ELSE 0 END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->'usage'->>'output_tokens')::integer, 0) ELSE 0 END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->'usage'->>'reasoning_tokens')::integer, 0) ELSE 0 END,
+                    CASE WHEN coalesce(attempt->>'outcome', '') <> 'error'
+                      THEN coalesce((call->>'estimated_cost_usd')::numeric, 0) ELSE 0 END,
+                    call->>'price_table_version',
+                    round(coalesce((attempt->>'latency_ms')::numeric, 0))::integer,
+                    round((attempt->>'openai_processing_ms')::numeric)::integer,
+                    (attempt->>'started_at')::timestamptz, (attempt->>'completed_at')::timestamptz
+                  FROM jsonb_array_elements(
+                    CASE WHEN jsonb_typeof($3::jsonb) = 'array' THEN $3::jsonb ELSE '[]'::jsonb END
+                  ) AS calls(call)
+                  CROSS JOIN LATERAL jsonb_array_elements(call->'attempts') AS attempts(attempt)
+                  ON CONFLICT (model_call_id, physical_attempt) DO UPDATE SET
+                    outcome = EXCLUDED.outcome,
+                    openai_request_id = EXCLUDED.openai_request_id,
+                    response_id = EXCLUDED.response_id,
+                    returned_model = EXCLUDED.returned_model,
+                    returned_service_tier = EXCLUDED.returned_service_tier,
+                    response_payload = EXCLUDED.response_payload,
+                    response_sha256 = EXCLUDED.response_sha256,
+                    input_tokens = EXCLUDED.input_tokens,
+                    cached_input_tokens = EXCLUDED.cached_input_tokens,
+                    cache_write_tokens = EXCLUDED.cache_write_tokens,
+                    output_tokens = EXCLUDED.output_tokens,
+                    reasoning_tokens = EXCLUDED.reasoning_tokens,
+                    estimated_cost_usd = EXCLUDED.estimated_cost_usd,
+                    client_duration_ms = EXCLUDED.client_duration_ms,
+                    openai_processing_ms = EXCLUDED.openai_processing_ms,
+                    completed_at = EXCLUDED.completed_at;
+                args_mapping: |
+                  root = [
+                    this.observability.processing_attempt_id,
+                    this.observability.analysis_trace_id,
+                    this.payload.model_calls.or([]).format_json()
+                  ]
+
+http:
+  enabled: true
+  address: 0.0.0.0:4196
+
+metrics:
+  prometheus:
+    add_process_metrics: true
+    add_go_metrics: true
+    use_histogram_timing: true
+
+logger:
+  level: INFO
+  format: json
+  add_timestamp: true
+  static_fields:
+    service.name: connect-sink
+
+tracer:
+  redpanda:
+    seed_brokers: [ '${SINK_REDPANDA_BROKERS:redpanda:9092}' ]
+    topic: otel-traces
+    format: json
+    service: connect-sink
+    tags:
+      deployment.environment: local
+    sampling:
+      enabled: true
+      ratio: 1.0
+    allow_auto_topic_creation: false

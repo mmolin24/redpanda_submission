@@ -1,0 +1,5 @@
+# Native-test target for the history configuration boundary. The runtime
+# history source invokes the same resource before HTTP or RSS record handling.
+pipeline:
+  processors:
+    - resource: source_validate_history_configuration

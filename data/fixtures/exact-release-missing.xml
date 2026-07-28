@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>PyPI exact-release-missing production simulation</title>
+    <item>
+      <title>urllib3 0.0.0.post999999999</title>
+      <link>https://pypi.org/project/urllib3/0.0.0.post999999999/</link>
+      <pubDate>Mon, 27 Jul 2026 12:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

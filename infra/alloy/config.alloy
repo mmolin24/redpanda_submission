@@ -1,0 +1,108 @@
+otelcol.receiver.otlp "worker" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    traces = [otelcol.processor.batch.traces.input]
+  }
+}
+
+otelcol.processor.batch "traces" {
+  timeout         = "2s"
+  send_batch_size = 1024
+  output {
+    traces = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+  sending_queue {
+    enabled       = true
+    queue_size    = 2048
+    num_consumers = 4
+  }
+  retry_on_failure {
+    enabled         = true
+    initial_interval = "1s"
+    max_interval     = "15s"
+    max_elapsed_time = "0s"
+  }
+}
+
+discovery.docker "local" {
+  host             = "http://docker-socket-proxy:2375"
+  refresh_interval = "5s"
+
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=" + sys.env("PYPI_COMPOSE_PROJECT")]
+  }
+}
+
+discovery.relabel "docker_logs" {
+  targets = discovery.docker.local.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = sys.env("PYPI_COMPOSE_PROJECT")
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "docker-socket-proxy"
+    action        = "drop"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    target_label = "compose_project"
+    replacement  = sys.env("PYPI_COMPOSE_PROJECT")
+  }
+  rule {
+    target_label = "deployment_environment"
+    replacement  = "local"
+  }
+}
+
+loki.source.docker "local" {
+  host       = "http://docker-socket-proxy:2375"
+  targets    = discovery.relabel.docker_logs.output
+  forward_to = [loki.process.local.receiver]
+}
+
+loki.process "local" {
+  stage.json {
+    expressions = {
+      trace_id   = "trace_id",
+      span_id    = "span_id",
+      event_key  = "event_key",
+      finding_id = "finding_id",
+      stage      = "stage",
+      level      = "level",
+    }
+  }
+  stage.labels {
+    values = {
+      stage = "stage",
+      level = "level",
+    }
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

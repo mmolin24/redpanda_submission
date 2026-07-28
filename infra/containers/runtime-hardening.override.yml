@@ -1,0 +1,64 @@
+# Test-only override: runtime security probes do not need service networking.
+# Resetting network membership avoids consuming a daemon address pool and
+# prevents probes from reaching the running development stack.
+services:
+  redpanda:
+    network_mode: none
+    networks: !reset []
+  redpanda-init:
+    network_mode: none
+    networks: !reset []
+  redpanda-console:
+    network_mode: none
+    networks: !reset []
+  postgres:
+    network_mode: none
+    networks: !reset []
+  alloy-data-init:
+    network_mode: none
+    networks: !reset []
+  alloy:
+    network_mode: none
+    networks: !reset []
+  api:
+    network_mode: none
+    networks: !reset []
+  connect-sink:
+    network_mode: none
+    networks: !reset []
+  connect-source:
+    network_mode: none
+    networks: !reset []
+  connect-trace-bridge:
+    network_mode: none
+    networks: !reset []
+  db-init:
+    network_mode: none
+    networks: !reset []
+  postgres-exporter:
+    network_mode: none
+    networks: !reset []
+  reasoning-worker:
+    network_mode: none
+    networks: !reset []
+  web:
+    network_mode: none
+    networks: !reset []
+    extra_hosts:
+      - "api=127.0.0.1"
+  docker-socket-proxy:
+    network_mode: none
+    networks: !reset []
+  tempo:
+    network_mode: none
+    networks: !reset []
+  loki:
+    network_mode: none
+    networks: !reset []
+  prometheus:
+    network_mode: none
+    networks: !reset []
+  grafana:
+    network_mode: none
+    networks: !reset []
+networks: !reset {}

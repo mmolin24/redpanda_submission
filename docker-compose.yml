@@ -1,0 +1,516 @@
+name: pypi-change-intelligence
+
+x-smoke-labels: &smoke-labels
+  io.pypi-change-intelligence.smoke-owner: ${PYPI_SMOKE_OWNER:-local}
+
+x-bounded-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+x-read-only-runtime: &read-only-runtime
+  read_only: true
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777
+  cap_drop: [ ALL ]
+  security_opt:
+    - no-new-privileges:true
+  logging: *bounded-logging
+  labels: *smoke-labels
+
+x-connect-common: &connect-common
+  <<: *read-only-runtime
+  image: docker.redpanda.com/redpandadata/connect:4.99.0@sha256:0e1fb0a8c14d8752e3bb56a317ebe0867bdb61873fe2bb3cfcb64f9139589989
+  user: "10001:10001"
+  restart: unless-stopped
+  networks: [ pipeline ]
+  volumes:
+    - ./config/connect:/config:ro
+    - ./config:/project-config:ro
+    - ./schemas:/schemas:ro
+    - ./data:/data:ro
+  depends_on:
+    redpanda-init:
+      condition: service_completed_successfully
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v26.1.13@sha256:ae0a858eddd0538dacbba5696f9be1f590de1fe51283964afc85f5510fa8f32e
+    command:
+      - redpanda
+      - start
+      - --kafka-addr=internal://0.0.0.0:9092
+      - --advertise-kafka-addr=internal://redpanda:9092
+      - --rpc-addr=redpanda:33145
+      - --advertise-rpc-addr=redpanda:33145
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --default-log-level=info
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    networks: [ pipeline ]
+    logging: *bounded-logging
+    labels: *smoke-labels
+    restart: unless-stopped
+    healthcheck:
+      test: [ CMD-SHELL, "rpk cluster health -X brokers=localhost:9092 >/dev/null 2>&1" ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  redpanda-init:
+    image: docker.redpanda.com/redpandadata/redpanda:v26.1.13@sha256:ae0a858eddd0538dacbba5696f9be1f590de1fe51283964afc85f5510fa8f32e
+    entrypoint: [ /bin/sh, /infra/create-topics.sh ]
+    environment:
+      REDPANDA_BROKERS: redpanda:9092
+      REDPANDA_ADMIN_HOSTS: redpanda:9644
+    volumes:
+      - ./infra/redpanda/create-topics.sh:/infra/create-topics.sh:ro
+    networks: [ pipeline ]
+    labels: *smoke-labels
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    restart: "no"
+
+  redpanda-console:
+    <<: *read-only-runtime
+    image: docker.redpanda.com/redpandadata/console:v3.8.0@sha256:4aa45603b7b9c57b7b8073289be4f880edb929599a8d3e17260e98d7ee7bcdd7
+    user: "100:101"
+    environment:
+      CONFIG_FILEPATH: /tmp/console-config.yaml
+      CONSOLE_CONFIG_FILE: |
+        kafka:
+          brokers: ["redpanda:9092"]
+        redpanda:
+          adminApi:
+            enabled: true
+            urls: ["http://redpanda:9644"]
+    entrypoint: [ /bin/sh, -c ]
+    command: [ 'echo "$$CONSOLE_CONFIG_FILE" > /tmp/console-config.yaml && /app/console' ]
+    ports:
+      - "127.0.0.1:${REDPANDA_CONSOLE_PORT-8080}:8080"
+    volumes:
+      - ./infra/health/redpanda-console-health.sh:/usr/local/bin/redpanda-console-health:ro
+    networks: [ pipeline ]
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ CMD, /bin/sh, /usr/local/bin/redpanda-console-health ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16.9-alpine3.21@sha256:36e8aabaa6fa6037537cff64011fa45a200fe2ba202141b9aca48cff3df7ad42
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pypi_intelligence}
+      POSTGRES_USER: ${POSTGRES_USER:-pypi}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pypi_local_only}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [ pipeline ]
+    logging: *bounded-logging
+    labels: *smoke-labels
+    restart: unless-stopped
+    healthcheck:
+      test: [ CMD-SHELL, "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  db-init:
+    <<: *read-only-runtime
+    image: postgres:16.9-alpine3.21@sha256:36e8aabaa6fa6037537cff64011fa45a200fe2ba202141b9aca48cff3df7ad42
+    user: "70:70"
+    entrypoint: [ /bin/sh, /infra/init.sh ]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pypi:pypi_local_only@postgres:5432/pypi_intelligence}
+    volumes:
+      - ./infra/db/init.sh:/infra/init.sh:ro
+      - ./db/migrations:/migrations:ro
+      - ./data:/data:ro
+      # The upstream client image declares PGDATA as a VOLUME. Mask it with an
+      # explicit read-only bind so this client-only job cannot receive an
+      # undeclared writable anonymous volume.
+      - ./infra/db/read-only-pgdata:/var/lib/postgresql/data:ro
+    networks: [ pipeline ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  connect-source:
+    <<: *connect-common
+    command: [ run, -r, /config/source-resources.yaml, "/config/${SOURCE_CONFIG:-source-fixture.yaml}" ]
+    environment:
+      HISTORY_PACKAGES: ${HISTORY_PACKAGES:-urllib3,requests,python-dateutil}
+      HISTORY_RELEASES_PER_PACKAGE: ${HISTORY_RELEASES_PER_PACKAGE:-2}
+      HISTORY_TARGET_VERSIONS: ${HISTORY_TARGET_VERSIONS:-}
+      SOURCE_REDPANDA_BROKERS: ${SOURCE_REDPANDA_BROKERS:-redpanda:9092}
+      SOURCE_FIXTURE_SCENARIO: ${SOURCE_FIXTURE_SCENARIO:-ingestion-relevance}
+      MONITORED_PACKAGES_PATH: /project-config/monitored-packages.json
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ CMD-SHELL, "wget -qO- http://localhost:4195/ready >/dev/null 2>&1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  reasoning-worker:
+    <<: *read-only-runtime
+    image: ${REASONING_IMAGE:-pypi-change-intelligence/reasoning-worker:local}
+    build:
+      context: .
+      dockerfile: services/reasoning/Dockerfile
+    environment:
+      REDPANDA_BROKERS: redpanda:9092
+      INPUT_TOPIC: pypi.releases.v1
+      FINDINGS_TOPIC: pypi.findings.v1
+      FAILURES_TOPIC: pypi.failures.v1
+      CONSUMER_GROUP: pypi-reasoning-v1
+      MONITORED_PACKAGES_PATH: /project-config/monitored-packages.json
+      FIXTURE_HISTORY_PATH: /data/fixtures/package-history.json
+      EVIDENCE_MODE: ${EVIDENCE_MODE:-}
+      MODEL_MODE: ${MODEL_MODE:-fake}
+      FAKE_MODEL_DELAY_SECONDS: ${FAKE_MODEL_DELAY_SECONDS:-0}
+      ANALYSIS_POLICY_REVISION: ${ANALYSIS_POLICY_REVISION:-analysis-policy-v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_PROMPT_CACHE_ENABLED: ${OPENAI_PROMPT_CACHE_ENABLED:-true}
+      OPENAI_TIMEOUT_SECONDS: ${OPENAI_TIMEOUT_SECONDS:-60}
+      PROCESSING_RETRY_BACKOFF_SECONDS: ${PROCESSING_RETRY_BACKOFF_SECONDS:-5}
+      PROCESSING_RETRY_MAX_ELAPSED_SECONDS: ${PROCESSING_RETRY_MAX_ELAPSED_SECONDS:-1800}
+      CONSUMER_MAX_POLL_INTERVAL_MS: ${CONSUMER_MAX_POLL_INTERVAL_MS:-3600000}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+      DEPLOYMENT_ENV: local
+      OBS_CAPTURE_MODEL_PAYLOADS: ${OBS_CAPTURE_MODEL_PAYLOADS:-false}
+    volumes:
+      - ./data:/data:ro
+      - ./config:/project-config:ro
+    user: "65532:65532"
+    networks: [ pipeline ]
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+      alloy:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 60s
+    healthcheck:
+      test: [ CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8090/ready', timeout=2)" ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  connect-sink:
+    <<: *connect-common
+    command: [ run, /config/sink.yaml ]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pypi:pypi_local_only@postgres:5432/pypi_intelligence}
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ CMD-SHELL, "wget -qO- http://localhost:4196/ready >/dev/null 2>&1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  connect-trace-bridge:
+    <<: *connect-common
+    command: [ run, /config/trace-bridge.yaml ]
+    depends_on:
+      redpanda-init:
+        condition: service_completed_successfully
+      alloy:
+        condition: service_healthy
+    healthcheck:
+      test: [ CMD-SHELL, "wget -qO- http://localhost:4197/ready >/dev/null 2>&1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  api:
+    <<: *read-only-runtime
+    image: ${API_IMAGE:-pypi-change-intelligence/api:local}
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://pypi:pypi_local_only@postgres:5432/pypi_intelligence}
+      GRAFANA_BASE_URL: ${GRAFANA_BASE_URL:-http://localhost:${GRAFANA_PORT:-3001}}
+      SOURCE_CONFIG: ${SOURCE_CONFIG:-source-fixture.yaml}
+    ports:
+      - "127.0.0.1:${API_PORT-8000}:8000"
+    user: "65532:65532"
+    networks: [ pipeline ]
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=2)" ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  web:
+    <<: *read-only-runtime
+    image: ${WEB_IMAGE:-pypi-change-intelligence/web:local}
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    ports:
+      - "127.0.0.1:${WEB_PORT-3000}:8080"
+    user: "101:101"
+    networks: [ pipeline ]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [ CMD, wget, -qO-, -T, "3", -t, "1", http://127.0.0.1:8080/healthz ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.2@sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
+    environment:
+      LOG_LEVEL: warning
+    read_only: true
+    tmpfs:
+      - /run:rw,nosuid,nodev,noexec,size=1m,mode=0755
+      - /tmp:rw,nosuid,nodev,noexec,size=8m,mode=1777
+    cap_drop: [ ALL ]
+    security_opt:
+      - no-new-privileges:true
+    logging: *bounded-logging
+    labels: *smoke-labels
+    volumes:
+      - ./infra/docker-socket-proxy/haproxy.cfg.template:/usr/local/etc/haproxy/haproxy.cfg.template:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [ docker-observability ]
+    healthcheck:
+      test: [ CMD, wget, -qO-, http://localhost:2375/_ping ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  alloy-data-init:
+    image: busybox:1.37.0-uclibc@sha256:39e0df8c4d65953b55c344f017e1ff2e0031a7454b3c24e6b76d402f207e315a
+    profiles: [ maintenance ]
+    user: "0:0"
+    entrypoint: [ /bin/chown, -hR, "473:473", /var/lib/alloy/data ]
+    network_mode: none
+    read_only: true
+    cap_drop: [ ALL ]
+    cap_add: [ CHOWN, DAC_READ_SEARCH ]
+    security_opt:
+      - no-new-privileges:true
+    labels: *smoke-labels
+    volumes:
+      - alloy-data:/var/lib/alloy/data
+    restart: "no"
+
+  alloy:
+    <<: *read-only-runtime
+    image: ${ALLOY_IMAGE:-pypi-change-intelligence/alloy:1.16.1}
+    build:
+      context: .
+      dockerfile: infra/telemetry/Dockerfile
+      args:
+        BASE_IMAGE: grafana/alloy:v1.16.1@sha256:51aeb9d829239345070619dad3edd6873186f913c84f45b365b74574fcb38ec0
+    command: [ run, --server.http.listen-addr=0.0.0.0:12345, --storage.path=/var/lib/alloy/data, /etc/alloy/config.alloy ]
+    environment:
+      PYPI_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-pypi-change-intelligence}
+    volumes:
+      - ./infra/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+    user: "473:473"
+    networks: [ pipeline, docker-observability ]
+    depends_on:
+      docker-socket-proxy:
+        condition: service_healthy
+      redpanda-init:
+        condition: service_completed_successfully
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: [ CMD, /bin/wget, -qO-, http://localhost:12345/-/ready ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  tempo:
+    image: ${TEMPO_IMAGE:-pypi-change-intelligence/tempo:2.10.5}
+    build:
+      context: .
+      dockerfile: infra/telemetry/Dockerfile
+      args:
+        BASE_IMAGE: grafana/tempo:2.10.5@sha256:ee21727732c7a7199cb71c3eee9153bbf23f9b0b87619f0555a0cf21a67f1a33
+    command: [ -config.file=/etc/tempo/tempo.yaml ]
+    volumes:
+      - ./infra/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    networks: [ pipeline ]
+    logging: *bounded-logging
+    labels: *smoke-labels
+    healthcheck:
+      test: [ CMD, /bin/wget, -qO-, http://localhost:3200/ready ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  loki:
+    image: ${LOKI_IMAGE:-pypi-change-intelligence/loki:3.7.2}
+    build:
+      context: .
+      dockerfile: infra/telemetry/Dockerfile
+      args:
+        BASE_IMAGE: grafana/loki:3.7.2@sha256:191d4fdfb7264f16989f0a57f320872620a5a7c2ceeec6229212c4190ec49b86
+    command: [ -config.file=/etc/loki/loki.yaml ]
+    volumes:
+      - ./infra/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    networks: [ pipeline ]
+    logging: *bounded-logging
+    labels: *smoke-labels
+    healthcheck:
+      test: [ CMD, /bin/wget, -qO-, http://localhost:3100/ready ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.12.0@sha256:69f5241418838263316593f7274a304b095c40bcf22e57272865da91bd60a8ac
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./infra/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ./infra/prometheus/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - prometheus-data:/prometheus
+    networks: [ pipeline ]
+    logging: *bounded-logging
+    labels: *smoke-labels
+    healthcheck:
+      test: [ CMD, /bin/wget, -qO-, http://localhost:9090/-/ready ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  postgres-exporter:
+    <<: *read-only-runtime
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1@sha256:38606faa38c54787525fb0ff2fd6b41b4cfb75d455c1df294927c5f611699b17
+    user: "65534:65534"
+    environment:
+      DATA_SOURCE_NAME: ${DATABASE_URL:-postgresql://pypi:pypi_local_only@postgres:5432/pypi_intelligence}?sslmode=disable
+    volumes:
+      - ./infra/health/postgres-exporter-health.sh:/usr/local/bin/postgres-exporter-health:ro
+    networks: [ pipeline ]
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ CMD, /bin/sh, /usr/local/bin/postgres-exporter-health ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Explore is required by the finding detail deep links. Keep the local demo
+      # anonymous, but allow Viewer sessions to run read-only Tempo/Loki queries.
+      GF_USERS_VIEWERS_CAN_EDIT: "true"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      POSTGRES_DB: ${POSTGRES_DB:-pypi_intelligence}
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT-3001}:3000"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks: [ pipeline ]
+    logging: *bounded-logging
+    labels: *smoke-labels
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [ CMD, wget, -qO-, http://localhost:3000/api/health ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  pipeline:
+    driver: bridge
+    labels: *smoke-labels
+  docker-observability:
+    driver: bridge
+    internal: true
+    labels: *smoke-labels
+
+volumes:
+  redpanda-data:
+    labels: *smoke-labels
+  postgres-data:
+    labels: *smoke-labels
+  alloy-data:
+    labels: *smoke-labels
+  tempo-data:
+    labels: *smoke-labels
+  loki-data:
+    labels: *smoke-labels
+  prometheus-data:
+    labels: *smoke-labels
+  grafana-data:
+    labels: *smoke-labels

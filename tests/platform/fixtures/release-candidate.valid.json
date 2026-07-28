@@ -1,0 +1,32 @@
+{
+  "schema_version": "release-event.v1",
+  "event_key": "pypi:urllib3:2.6.0",
+  "source": "pypi-rss-updates",
+  "package": {
+    "name": "urllib3",
+    "normalized_name": "urllib3"
+  },
+  "release": {
+    "version": "2.6.0",
+    "published_at": "2026-07-20T08:34:56-04:00",
+    "url": "https://pypi.org/project/urllib3/2.6.0/"
+  },
+  "ingested_at": "2026-07-20T12:35:10Z",
+  "observability": {
+    "processing_attempt_id": "019b0000-0000-7000-8000-000000000001",
+    "analysis_trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "analysis_span_id": "00f067aa0ba902b7",
+    "trace_flags": "01",
+    "tracestate": null,
+    "stage_summary": [
+      {
+        "stage": "relevance",
+        "started_at": "2026-07-20T12:35:10Z",
+        "completed_at": "2026-07-20T12:35:10Z",
+        "outcome": "completed",
+        "attempt": 1,
+        "detail": "candidate_extracted"
+      }
+    ]
+  }
+}

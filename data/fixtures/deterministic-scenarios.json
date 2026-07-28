@@ -1,0 +1,58 @@
+{
+  "scenarios": [
+    {
+      "id": "R01",
+      "name": "prerelease_observation",
+      "event_key": "pypi:boto3:1.40.0rc1",
+      "disposition": "prerelease_observed",
+      "publishable": false,
+      "routing": "observe_only",
+      "proof": "prerelease"
+    },
+    {
+      "id": "R02",
+      "name": "no_scoped_release_change",
+      "event_key": "pypi:urllib3:2.6.1",
+      "disposition": "non_substantive",
+      "publishable": false,
+      "routing": "deterministic_non_substantive",
+      "proof": "non_substantive"
+    },
+    {
+      "id": "R03",
+      "name": "python_floor_tightening",
+      "event_key": "pypi:urllib3:2.6.0",
+      "disposition": "publishable",
+      "publishable": true,
+      "routing": "deterministic_impact",
+      "proof": "python_version"
+    },
+    {
+      "id": "R04",
+      "name": "wheel_platform_contraction",
+      "event_key": "pypi:cffi:2.1.0",
+      "disposition": "publishable",
+      "publishable": true,
+      "routing": "deterministic_impact",
+      "proof": "wheel_coverage"
+    },
+    {
+      "id": "R05",
+      "name": "support_only_expansion",
+      "event_key": "pypi:packaging:26.2",
+      "disposition": "publishable",
+      "publishable": true,
+      "routing": "deterministic_impact",
+      "proof": "support_expanded"
+    },
+    {
+      "id": "R06",
+      "name": "release_yank",
+      "event_key": "pypi:pluggy:1.6.1",
+      "disposition": "publishable",
+      "publishable": true,
+      "routing": "deterministic_impact",
+      "proof": "release_availability"
+    }
+  ]
+}
