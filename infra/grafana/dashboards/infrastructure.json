@@ -1,0 +1,22 @@
+{
+  "uid": "pypi-infra",
+  "title": "PyPI Infrastructure",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Service availability",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "up", "legendFormat": "{{job}}" }],
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Redpanda request latency",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "rate(redpanda_request_latency_seconds_sum[5m]) / rate(redpanda_request_latency_seconds_count[5m])", "legendFormat": "{{request}}" }],
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 0 }
+    }
+  ]
+}

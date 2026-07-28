@@ -1,0 +1,10 @@
+tests:
+  - name: unavailable release schema remains a systemic processor error
+    target_processors: source-fixture.yaml#/pipeline/processors
+    environment:
+      FAILURE_SNAPSHOT_MAX_BYTES: "262144"
+    input_batch:
+      - content: |
+          <rss version="2.0"><channel><item><title>urllib3 2.7.0</title><link>https://pypi.org/project/urllib3/2.7.0/</link><pubDate>Tue, 21 Jul 2026 12:00:00 GMT</pubDate></item></channel></rss>
+    output_batches:
+      - - bloblang: 'errored() && @target_topic.or("") != "pypi.ingest-failures.v1"'

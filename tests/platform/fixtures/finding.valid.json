@@ -1,0 +1,51 @@
+{
+  "schema_version": "finding.v1",
+  "finding_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "event_key": "pypi:urllib3:2.6.0",
+  "source_event": {
+    "schema_version": "release-event.v1",
+    "event_key": "pypi:urllib3:2.6.0",
+    "source": "pypi-rss-updates",
+    "package": { "name": "urllib3", "normalized_name": "urllib3" },
+    "release": { "version": "2.6.0", "published_at": "2026-07-20T12:34:56Z", "url": "https://pypi.org/project/urllib3/2.6.0/" },
+    "ingested_at": "2026-07-20T12:35:10Z",
+    "observability": {
+      "processing_attempt_id": "019b0000-0000-7000-8000-000000000001",
+      "analysis_trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+      "analysis_span_id": "00f067aa0ba902b7",
+      "trace_flags": "01",
+      "tracestate": null,
+      "stage_summary": [{ "stage": "relevance", "started_at": "2026-07-20T12:35:10Z", "completed_at": "2026-07-20T12:35:10Z", "outcome": "completed", "attempt": 1, "detail": "monitored_package" }]
+    }
+  },
+  "disposition": "publishable",
+  "analysis_method": "model_assisted",
+  "package": "urllib3",
+  "baseline_version": "2.5.0",
+  "candidate_version": "2.6.0",
+  "gate_results": {
+    "materiality": { "decision": "substantive", "confidence": 0.91, "change_types": ["dependency_contract"], "assessment": "Fixture assessment" },
+    "applicability": { "confidence": 0.88, "assessment": "Fixture applicability assessment", "limitations": ["Fixture evidence only"] },
+    "customer_impact": { "limitations": ["Fixture evidence only"] }
+  },
+  "evidence_bundle": { "evidence": [], "completeness": { "status": "complete" } },
+  "routing": { "processing_priority": "high", "reasoning_complexity": "simple" },
+  "analysis_metadata": {
+    "analysis_version": "analysis-v1",
+    "model_calls": [],
+    "started_at": "2026-07-20T12:35:11Z",
+    "completed_at": "2026-07-20T12:35:13Z"
+  },
+  "publishable": true,
+  "observability": {
+    "processing_attempt_id": "019b0000-0000-7000-8000-000000000001",
+    "analysis_trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "analysis_span_id": "b7ad6b7169203331",
+    "trace_flags": "01",
+    "tracestate": null,
+    "stage_summary": [
+      { "stage": "relevance", "started_at": "2026-07-20T12:35:10Z", "completed_at": "2026-07-20T12:35:10Z", "outcome": "completed", "attempt": 1, "detail": "monitored_package" },
+      { "stage": "postgres", "started_at": "2026-07-20T12:35:13Z", "completed_at": "2026-07-20T12:35:13Z", "outcome": "completed", "attempt": 1, "detail": "commit_proven_by_persisted_row" }
+    ]
+  }
+}

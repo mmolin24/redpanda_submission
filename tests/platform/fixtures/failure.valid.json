@@ -1,0 +1,25 @@
+{
+  "schema_version": "failure.v1",
+  "failure_id": "019b0000-0000-7000-8000-000000000002",
+  "failure_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "event_key": "pypi:urllib3:2.6.0",
+  "stage": "materiality",
+  "error_class": "openai_rate_limit",
+  "message": "Provider retry budget exhausted",
+  "retryable": true,
+  "attempt_count": 3,
+  "first_failed_at": "2026-07-20T12:35:11Z",
+  "last_failed_at": "2026-07-20T12:35:13Z",
+  "next_retry_at": null,
+  "payload": {},
+  "observability": {
+    "processing_attempt_id": "019b0000-0000-7000-8000-000000000001",
+    "analysis_trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "analysis_span_id": "b7ad6b7169203331",
+    "trace_flags": "01",
+    "tracestate": null,
+    "stage_summary": [
+      { "stage": "materiality", "started_at": "2026-07-20T12:35:11Z", "completed_at": "2026-07-20T12:35:13Z", "outcome": "failed", "attempt": 3, "detail": "retry_exhausted" }
+    ]
+  }
+}

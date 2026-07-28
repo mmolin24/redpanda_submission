@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.pypi-intelligence/schemas/finding.schema.json",
+  "title": "Terminal analysis finding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "finding_id", "event_key", "source_event", "disposition", "analysis_method", "package", "candidate_version", "gate_results", "evidence_bundle", "routing", "analysis_metadata", "publishable", "observability"],
+  "properties": {
+    "schema_version": { "const": "finding.v1" },
+    "finding_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "event_key": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "source_event": {
+      "$ref": "file:///schemas/release-event.schema.json"
+    },
+    "disposition": {
+      "enum": ["prerelease_observed", "non_substantive", "insufficient_evidence", "refused", "publishable", "suppressed_low_confidence", "suppressed_validation_failure"]
+    },
+    "analysis_method": { "enum": ["deterministic", "model_assisted"] },
+    "package": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "baseline_version": { "type": ["string", "null"], "maxLength": 128 },
+    "candidate_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "gate_results": { "type": "object" },
+    "evidence_bundle": { "type": "object" },
+    "routing": { "type": "object" },
+    "analysis_metadata": {
+      "type": "object",
+      "required": ["analysis_version", "model_calls", "started_at", "completed_at"],
+      "properties": {
+        "analysis_version": { "type": "string", "minLength": 1 },
+        "model_calls": { "type": "array", "items": { "type": "object" } },
+        "started_at": {
+          "$ref": "file:///schemas/common-defs.schema.json#/$defs/dateTime"
+        },
+        "completed_at": {
+          "$ref": "file:///schemas/common-defs.schema.json#/$defs/dateTime"
+        },
+        "prompt_hash": { "type": ["string", "null"] },
+        "schema_hash": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "publishable": { "type": "boolean" },
+    "observability": {
+      "$ref": "file:///schemas/common-defs.schema.json#/$defs/traceContext"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "disposition": { "const": "publishable" } } },
+      "then": { "properties": { "publishable": { "const": true } } },
+      "else": { "properties": { "publishable": { "const": false } } }
+    }
+  ]
+}

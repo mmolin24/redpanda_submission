@@ -1,0 +1,92 @@
+groups:
+  - name: pypi-data-movement
+    rules:
+      - alert: SourceConnectDown
+        expr: up{job="connect-source"} == 0
+        for: 2m
+        labels: { severity: warning }
+        annotations: { summary: "Source Connect has been unavailable for two polling intervals" }
+      - alert: SinkConnectDown
+        expr: up{job="connect-sink"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "Sink Connect cannot persist terminal results" }
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "Postgres is unavailable" }
+      - alert: WorkerConsumerLagHigh
+        expr: redpanda_kafka_consumer_group_lag_sum{job="redpanda",redpanda_group="pypi-reasoning-v1"} > 100
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Reasoning worker lag is above 100 messages" }
+      - alert: ReasoningBackpressure
+        expr: increase(pypi_reasoning_backpressure_total{job="reasoning-worker"}[5m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Reasoning stopped before acknowledging a release"
+          description: "The source offset remains uncommitted. The worker must recover before this release can advance."
+      - alert: ReasoningTerminalOversize
+        expr: increase(pypi_reasoning_terminal_oversize_total{job="reasoning-worker"}[5m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "An oversized reasoning result was sent to the failure topic"
+          description: "Redpanda broker acknowledged the bounded failure record; Postgres persistence is not yet confirmed."
+      - alert: SinkConsumerLagHigh
+        expr: redpanda_kafka_consumer_group_lag_sum{job="redpanda",redpanda_group="pypi-postgres-sink-v1"} > 100
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Postgres sink lag is above 100 messages" }
+      - alert: TelemetryRejected
+        expr: increase(otelcol_exporter_send_failed_spans_total[5m]) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "The telemetry pipeline rejected or dropped spans" }
+      - alert: IngestionDlqActivity
+        expr: increase(pypi_ingest_dlq_total{job="connect-source"}[5m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "A valid source failure entered the DLQ publication path"
+          description: "The failure envelope is inside retry-protected DLQ publication. Delivery and persistence are not yet confirmed."
+      - alert: SourceOutputErrorsPersistent
+        expr: |
+          (
+            sum by (job) (rate(output_error{job="connect-source",label="source_redpanda_delivery"}[1m])) > 0
+            or
+            (
+              sum by (job) (pypi_source_delivery_ready_total{job="connect-source"})
+              - sum by (job) (output_sent{job="connect-source",label="source_redpanda_delivery"})
+            ) > 0
+          )
+          and on (job) max by (job) (up{job="connect-source"}) == 1
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "Source output errors have persisted for two minutes"
+          description: "Records are under output retry/backpressure; this is not successful dead-lettering."
+      - alert: SourceOutputConnectionFailures
+        expr: |
+          (
+            (
+              sum by (job) (rate(output_connection_failed{job="connect-source",label="source_redpanda_delivery"}[1m])) > 0
+              or
+              (
+                sum by (job) (pypi_source_delivery_ready_total{job="connect-source"})
+                - sum by (job) (output_sent{job="connect-source",label="source_redpanda_delivery"})
+              ) > 0
+            )
+            and on (job) max by (job) (up{job="connect-source"}) == 1
+          )
+          or label_replace(
+            (
+              max by (job) (up{job="redpanda"}) == 0
+              and on () max(up{job="connect-source"}) == 1
+            ),
+            "job", "connect-source", "job", "redpanda"
+          )
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Source is running but cannot connect to Redpanda"
+          description: "Records remain pending behind the source output retry boundary."

@@ -1,0 +1,74 @@
+{
+  "uid": "pypi-pipeline",
+  "title": "PyPI Pipeline Movement",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "source relevance filtering decisions",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (decision) (rate(pypi_relevance_events_total[5m]))", "legendFormat": "{{decision}}" }],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Sink message rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (schema_version) (rate(pypi_sink_messages_total[5m]))", "legendFormat": "{{schema_version}}" }],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+    },
+    {
+      "id": 3, "type": "table", "title": "Latest persisted analysis traces",
+      "datasource": { "type": "postgres", "uid": "pipeline-postgres" },
+      "targets": [{ "format": "table", "rawSql": "SELECT persisted_at AS time, finding_id, event_key, disposition, analysis_trace_id FROM pipeline_run_summaries ORDER BY persisted_at DESC LIMIT 50" }],
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 }
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Worker terminal output rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (outcome) (rate(pypi_reasoning_messages_total[5m]))", "legendFormat": "{{outcome}}" }],
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 }
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Consumer-group lag",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "redpanda_kafka_consumer_group_lag_sum{redpanda_group=~\"pypi-reasoning-v1|pypi-postgres-sink-v1\"}", "legendFormat": "{{redpanda_group}}" }],
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 }
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Sink writes, retries, and latency",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(output_sent{job=\"connect-sink\"}[5m])", "legendFormat": "writes/s" },
+        { "expr": "rate(output_error{job=\"connect-sink\"}[5m])", "legendFormat": "retrying errors/s" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(output_latency_ns_bucket{job=\"connect-sink\"}[5m])))", "legendFormat": "p95 write latency" }
+      ],
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Oversized terminals sent to failure topic",
+      "description": "Bounded replacement records counted only after Redpanda broker acknowledgement. Postgres persistence is a later sink step.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (original_type) (increase(pypi_reasoning_terminal_oversize_total{job=\"reasoning-worker\"}[5m]))",
+          "legendFormat": "{{original_type}}"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 }
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Unacknowledged reasoning backpressure",
+      "description": "Releases remain uncommitted and pending recovery; no terminal record has been acknowledged for these attempts.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (kind) (increase(pypi_reasoning_backpressure_total{job=\"reasoning-worker\"}[5m]))",
+          "legendFormat": "{{kind}}"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 }
+    }
+  ]
+}

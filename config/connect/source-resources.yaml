@@ -1,0 +1,395 @@
+processor_resources:
+  - label: source_validate_history_configuration
+    mapping: |
+      # Configuration and deployment errors must remain outside every
+      # record-level catch path. A failure here keeps the generated package
+      # input unacknowledged and prevents HTTP/RSS processing.
+      let package = this.package.or("").string().trim()
+      let release_limit_text = env("HISTORY_RELEASES_PER_PACKAGE").or("2").trim()
+      let target_versions_text = env("HISTORY_TARGET_VERSIONS").or("").trim()
+      let release_limit = if $release_limit_text.re_match("^[1-9][0-9]{0,2}$") {
+        $release_limit_text.number()
+      } else {
+        throw("history release limit must be a positive integer")
+      }
+      let target_versions = if $target_versions_text == "" {
+        []
+      } else {
+        $target_versions_text.split(",").map_each(version -> version.trim())
+      }
+      let invalid_target_versions = $target_versions.map_each(version -> version == "" || version.length() > 128 || !version.re_match("^[A-Za-z0-9][A-Za-z0-9._!+~-]{0,127}$"))
+
+      root = if $package == "" ||
+        $package.length() > 200 ||
+        !$package.re_match("^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$") {
+        throw("history package must be a bounded Python distribution name")
+      } else if $release_limit > 100 {
+        throw("history release limit exceeds the supported maximum")
+      } else if $target_versions_text.length() > 8192 ||
+        $target_versions.length() > 100 ||
+        $invalid_target_versions.contains(true) {
+        throw("history target versions must be a bounded comma-separated exact list")
+      } else {
+        this
+      }
+      meta history_package = $package
+      meta history_release_limit = $release_limit.string()
+      meta history_target_versions = $target_versions.join(",")
+
+  - label: source_build_ingest_failure
+    mapping: |
+      # This resource is only invoked after a record-specific failure has been
+      # classified. The original parser text is deliberately never exposed.
+      let now = now().ts_format("2006-01-02T15:04:05.999999999Z07:00")
+      let error_class = meta("failure_error_class")
+      let content_sha256 = meta("failure_content_sha256")
+      let fingerprint_material = "ingestion" + "\u0000" + $error_class + "\u0000" + $content_sha256
+      let span = tracing_span()
+      let traceparent = $span.traceparent.or("")
+      let trace_parts = $traceparent.split("-")
+      let trace_id = if $trace_parts.length() >= 4 { $trace_parts.index(1) } else { "00000000000000000000000000000000" }
+      let span_id = if $trace_parts.length() >= 4 { $trace_parts.index(2) } else { "0000000000000000" }
+      let flags = if $trace_parts.length() >= 4 { $trace_parts.index(3) } else { "00" }
+      let processing_attempt_id = uuid_v7()
+      let failure_id = uuid_v7()
+
+      root = {
+        "schema_version": "failure.v1",
+        "failure_id": $failure_id,
+        "failure_fingerprint": "sha256:" + $fingerprint_material.hash("sha256").encode("hex"),
+        "event_key": null,
+        "stage": "ingestion",
+        "error_class": $error_class,
+        "message": meta("failure_message"),
+        "retryable": false,
+        "attempt_count": 1,
+        "first_failed_at": $now,
+        "last_failed_at": $now,
+        "next_retry_at": null,
+        "payload": {
+          "input_kind": meta("failure_input_kind"),
+          "content_sha256": $content_sha256,
+          "original_bytes": meta("failure_original_bytes").number(),
+          "captured_bytes": meta("failure_captured_bytes").number(),
+          "snapshot_base64": meta("failure_snapshot_base64"),
+          "snapshot_encoding": "base64",
+          "truncated": meta("failure_truncated").bool(),
+          "source": "pypi-rss-updates",
+          "content_type": meta("failure_content_type"),
+          "error_source_name": @error.name.or(meta("failure_error_source_name")).or(null),
+          "error_source_label": @error.label.or(meta("failure_error_source_label")).or(null),
+          "error_source_path": @error.path.or(meta("failure_error_source_path")).or(null)
+        },
+        "observability": {
+          "processing_attempt_id": $processing_attempt_id,
+          "analysis_trace_id": $trace_id,
+          "analysis_span_id": $span_id,
+          "trace_flags": $flags,
+          "tracestate": $span.tracestate.or(null),
+          "stage_summary": [{
+            "stage": "relevance",
+            "started_at": $now,
+            "completed_at": $now,
+            "outcome": "failed",
+            "attempt": 1,
+            "detail": $error_class
+          }]
+        }
+      }
+
+      meta relevance_decision = "invalid"
+      meta kafka_key = $failure_id
+      meta target_topic = "pypi.ingest-failures.v1"
+
+  - label: source_ingestion_pipeline
+    switch:
+      - check: 'true'
+        processors:
+          - label: capture_rss_document_evidence
+            mapping: |
+              let requested_cap = env("FAILURE_SNAPSHOT_MAX_BYTES").or("262144").number()
+              let cap = if $requested_cap < 0 { 0 } else if $requested_cap > 262144 { 262144 } else { $requested_cap }
+              let original_bytes = content().length()
+              let captured = content().slice(0, $cap)
+
+              meta failure_input_kind = "rss_document"
+              meta failure_content_sha256 = content().hash("sha256").encode("hex")
+              meta failure_original_bytes = $original_bytes
+              meta failure_captured_bytes = $captured.length()
+              meta failure_snapshot_base64 = $captured.encode("base64")
+              meta failure_truncated = $original_bytes > $captured.length()
+              meta failure_content_type = "application/rss+xml"
+              root = content()
+
+          - label: parse_and_extract_rss_items
+            try_catch:
+              processors:
+                - label: parse_rss_xml
+                  mapping: |
+                    # Bloblang parse failures are normalized into a sentinel so
+                    # the following schema processor raises the recoverable
+                    # record error inside this try_catch boundary.
+                    root = content().parse_xml().catch({"_source_parse_failed": true})
+                - label: validate_rss_shape
+                  json_schema:
+                    schema: |
+                      {
+                        "type": "object",
+                        "required": ["rss"],
+                        "properties": {
+                          "rss": {
+                            "type": "object",
+                            "required": ["channel"],
+                            "properties": {
+                              "channel": {
+                                "type": "object",
+                                "required": ["item"]
+                              }
+                            }
+                          }
+                        }
+                      }
+                - label: select_rss_items
+                  mapping: |
+                    let raw_items = this.rss.channel.item
+                    let items = if $raw_items == null {
+                      throw("rss item collection is missing")
+                    } else if $raw_items.type() == "array" {
+                      $raw_items
+                    } else {
+                      [$raw_items]
+                    }
+                    let target_versions_text = meta("history_target_versions").or("")
+                    let target_versions = if $target_versions_text == "" { [] } else { $target_versions_text.split(",") }
+                    root = if meta("history_package").or("") == "" {
+                      $items
+                    } else if $target_versions.length() > 0 {
+                      $items.filter(item -> $target_versions.contains(item.title))
+                    } else {
+                      $items.slice(0, meta("history_release_limit").or("2").number())
+                    }
+                - label: split_rss_items
+                  unarchive:
+                    format: json_array
+              catch:
+                - mapping: |
+                    meta failure_error_class = "malformed_rss"
+                    meta failure_message = "RSS document could not be parsed into release items"
+                    root = this
+                - resource: source_build_ingest_failure
+              error_metadata: error
+
+          - label: capture_and_normalize_rss_item
+            switch:
+              - check: 'this.schema_version != "failure.v1"'
+                processors:
+                  - label: capture_rss_item_evidence
+                    mapping: |
+                      let requested_cap = env("FAILURE_SNAPSHOT_MAX_BYTES").or("262144").number()
+                      let cap = if $requested_cap < 0 { 0 } else if $requested_cap > 262144 { 262144 } else { $requested_cap }
+                      let original_bytes = content().length()
+                      let captured = content().slice(0, $cap)
+
+                      meta failure_input_kind = "rss_item"
+                      meta failure_content_sha256 = content().hash("sha256").encode("hex")
+                      meta failure_original_bytes = $original_bytes
+                      meta failure_captured_bytes = $captured.length()
+                      meta failure_snapshot_base64 = $captured.encode("base64")
+                      meta failure_truncated = $original_bytes > $captured.length()
+                      meta failure_content_type = "application/json"
+                      root = this
+                  - label: normalize_release_candidate
+                    mapping: |
+                      let now = now().ts_format("2006-01-02T15:04:05.999999999Z07:00")
+                      let link = this.link.or("").string()
+                      let link_parts = $link.trim_prefix("https://pypi.org/project/").trim_suffix("/").split("/")
+                      let valid_link = $link.has_prefix("https://pypi.org/project/") && $link_parts.length() == 2
+                      let original_name = if $valid_link { $link_parts.index(0) } else { "" }
+                      let version = if $valid_link { $link_parts.index(1) } else { "" }
+                      let normalized_name = $original_name.lowercase().re_replace_all("[-_.]+", "-")
+                      let event_key = "pypi:" + $normalized_name + ":" + $version
+                      let span = tracing_span()
+                      let traceparent = $span.traceparent.or("")
+                      let trace_parts = $traceparent.split("-")
+                      let trace_id = if $trace_parts.length() >= 4 { $trace_parts.index(1) } else { "00000000000000000000000000000000" }
+                      let span_id = if $trace_parts.length() >= 4 { $trace_parts.index(2) } else { "0000000000000000" }
+                      let flags = if $trace_parts.length() >= 4 { $trace_parts.index(3) } else { "00" }
+                      let processing_attempt_id = uuid_v7()
+
+                      meta relevance_decision = if $valid_link { "pending_config" } else { "invalid" }
+                      meta failure_error_class = if $valid_link { "" } else { "invalid_release_event" }
+                      meta failure_message = if $valid_link { "" } else { "RSS item did not contain a canonical PyPI release URL" }
+                      meta failure_error_source_name = if $valid_link { "" } else { "release_link_validation" }
+                      meta failure_error_source_label = if $valid_link { "" } else { "normalize_release_candidate" }
+                      meta failure_error_source_path = if $valid_link { "" } else { "/pipeline/relevance/release_link" }
+
+                      root = if $valid_link {
+                        {
+                          "schema_version": "release-event.v1",
+                          "event_key": $event_key,
+                          "source": "pypi-rss-updates",
+                          "package": {
+                            "name": $original_name,
+                            "normalized_name": $normalized_name
+                          },
+                          "release": {
+                            "version": $version,
+                            "published_at": this.pubDate.string().ts_parse("Mon, 02 Jan 2006 15:04:05 MST").ts_format("2006-01-02T15:04:05Z").catch(null),
+                            "url": $link
+                          },
+                          "ingested_at": $now,
+                          "observability": {
+                            "processing_attempt_id": $processing_attempt_id,
+                            "analysis_trace_id": $trace_id,
+                            "analysis_span_id": $span_id,
+                            "trace_flags": $flags,
+                            "tracestate": $span.tracestate.or(null),
+                            "stage_summary": [{
+                              "stage": "relevance",
+                              "started_at": $now,
+                              "completed_at": $now,
+                              "outcome": "completed",
+                              "attempt": 1,
+                              "detail": "monitored_package"
+                            }]
+                          }
+                        }
+                      } else {
+                        this
+                      }
+
+          - label: build_invalid_link_failure
+            switch:
+              - check: 'meta("relevance_decision") == "invalid" && this.schema_version != "failure.v1"'
+                processors:
+                  - resource: source_build_ingest_failure
+
+          # Validate release fields before relevance can
+          # intentionally delete an unmonitored package.
+          - label: validate_release_candidate_contract
+            switch:
+              - check: 'this.schema_version == "release-event.v1"'
+                processors:
+                  - try_catch:
+                      processors:
+                        - json_schema:
+                            schema_path: file:///schemas/release-candidate.schema.json
+                      catch:
+                        - mapping: |
+                            meta failure_error_class = "invalid_release_event"
+                            meta failure_message = "RSS item did not satisfy the normalized release contract"
+                            root = this
+                        - resource: source_build_ingest_failure
+                      error_metadata: error
+
+          # Keep all terminal processing in the same non-recovering try chain.
+          # This preserves short-circuit behavior in native tests as well as in
+          # strict runtime mode without converting the error into a dead letter.
+          - label: finish_relevance_or_propagate_system_error
+            try:
+              # The checked-in list is the complete customer monitoring boundary.
+              # A missing or invalid config nacks/backpressures rather than silently
+              # changing which packages enter the stream.
+              - label: apply_monitored_package_config
+                switch:
+                  - check: 'this.schema_version == "release-event.v1"'
+                    processors:
+                      - label: load_monitored_packages
+                        mapping: |
+                          meta pending_release_event = this.format_json(no_indent: true)
+                          root = file(env("MONITORED_PACKAGES_PATH").or("/config/monitored-packages.json")).parse_json()
+                      - label: validate_monitored_packages
+                        json_schema:
+                          schema_path: file:///schemas/monitored-packages.schema.json
+                      - label: select_monitored_release
+                        mapping: |
+                          let release_event = meta("pending_release_event").parse_json()
+                          let matches = this.packages.filter(name -> name == $release_event.package.normalized_name)
+                          meta relevance_decision = if $matches.length() == 0 { "irrelevant" } else { "relevant" }
+                          meta kafka_key = $release_event.event_key
+                          meta target_topic = "pypi.releases.v1"
+                          root = $release_event
+
+              - label: relevance_metric
+                metric:
+                  type: counter
+                  name: pypi_relevance_events_total
+                  labels:
+                    decision: ${! metadata("relevance_decision") }
+                  value: 1
+
+              - label: remove_irrelevant_release
+                mapping: |
+                  root = if meta("relevance_decision") == "irrelevant" { deleted() } else { this }
+
+              - label: validate_release_contract
+                switch:
+                  - check: 'this.schema_version == "release-event.v1"'
+                    processors:
+                      - try_catch:
+                          processors:
+                            - json_schema:
+                                schema_path: file:///schemas/release-event.schema.json
+                          catch:
+                            - mapping: |
+                                meta failure_error_class = "invalid_release_event"
+                                meta failure_message = "RSS item did not satisfy the normalized release contract"
+                                root = this
+                            - resource: source_build_ingest_failure
+                          error_metadata: error
+
+              # Failure validation is not recoverable. If the producer ever
+              # creates an invalid envelope, the input remains unacknowledged.
+              - label: validate_ingest_failure_contract
+                switch:
+                  - check: 'this.schema_version == "failure.v1"'
+                    processors:
+                      - resource: source_validate_ingest_failure
+
+              # These counters run after the failure contract is accepted and
+              # before the output retry boundary. A broker outage therefore
+              # raises output_* metrics without manufacturing DLQ activity.
+              - label: ingest_dlq_metric
+                switch:
+                  - check: 'this.schema_version == "failure.v1"'
+                    processors:
+                      - metric:
+                          type: counter
+                          name: pypi_ingest_dlq_total
+                          labels:
+                            error_class: ${! this.error_class }
+                          value: 1
+
+              - label: ingest_snapshot_truncated_metric
+                switch:
+                  - check: 'this.schema_version == "failure.v1" && this.payload.truncated.or(false)'
+                    processors:
+                      - metric:
+                          type: counter
+                          name: pypi_ingest_snapshot_truncated_total
+                          labels:
+                            error_class: ${! this.error_class }
+                          value: 1
+
+              - label: in_process_release_dedupe
+                switch:
+                  - check: 'this.schema_version == "release-event.v1"'
+                    processors:
+                      - dedupe:
+                          cache: ingest_dedupe
+                          key: ${! this.event_key }
+                          drop_on_err: false
+
+              # This no-label counter advances once for each validated,
+              # non-deduplicated record immediately before the output retry
+              # boundary. Subtracting acknowledged output_sent yields the
+              # number of records currently pending broker acknowledgement.
+              - label: source_delivery_ready_metric
+                metric:
+                  type: counter
+                  name: pypi_source_delivery_ready_total
+                  value: 1
+
+  - label: source_validate_ingest_failure
+    json_schema:
+      schema_path: file:///schemas/ingest-failure.schema.json

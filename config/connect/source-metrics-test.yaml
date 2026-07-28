@@ -1,0 +1,61 @@
+error_handling:
+  strict: true
+
+input:
+  generate:
+    interval: 1s
+    count: 1
+    auto_replay_nacks: true
+    mapping: 'root = file("/metrics-data/pypi-updates.xml")'
+
+pipeline:
+  threads: 1
+  processors:
+    - sleep:
+        duration: 8s
+    - resource: source_ingestion_pipeline
+
+output:
+  retry:
+    max_retries: 0
+    backoff:
+      initial_interval: 100ms
+      max_interval: 500ms
+      max_elapsed_time: 0s
+    output:
+      label: source_redpanda_delivery
+      redpanda:
+        seed_brokers: [ "${SOURCE_METRICS_REDPANDA_BROKERS:redpanda:9092}" ]
+        topic: ${! metadata("target_topic") }
+        key: ${! metadata("kafka_key") }
+        idempotent_write: true
+        acks: all
+        allow_auto_topic_creation: false
+        max_in_flight_requests: 1
+        record_retries: 0
+        record_delivery_timeout: 0s
+
+cache_resources:
+  - label: ingest_dedupe
+    memory:
+      compaction_interval: ""
+
+http:
+  enabled: true
+  address: 0.0.0.0:4195
+
+metrics:
+  prometheus:
+    add_process_metrics: false
+    add_go_metrics: false
+    use_histogram_timing: true
+
+logger:
+  level: INFO
+  format: json
+  add_timestamp: true
+  static_fields:
+    service.name: connect-source-metrics-test
+
+tracer:
+  none: {}

@@ -1,0 +1,69 @@
+apiVersion: 1
+
+deleteDatasources:
+  - { name: Tempo, orgId: 1 }
+  - { name: Loki, orgId: 1 }
+  - { name: Prometheus, orgId: 1 }
+  - { name: Pipeline Postgres, orgId: 1 }
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -1m
+        spanEndTimeShift: 1m
+        filterByTraceID: true
+        filterBySpanID: true
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      derivedFields:
+        - name: TraceID
+          matcherRegex: '"trace_id"\s*:\s*"([0-9a-f]{32})"'
+          datasourceUid: tempo
+          url: '$${__value.raw}'
+
+  - name: Pipeline Postgres
+    uid: pipeline-postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: grafana_reader
+    database: $POSTGRES_DB
+    editable: false
+    secureJsonData:
+      password: grafana_local_only
+    jsonData:
+      # Grafana 13's PostgreSQL frontend reads the default database from
+      # jsonData, while the backend still exposes the top-level field.
+      database: $POSTGRES_DB
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false

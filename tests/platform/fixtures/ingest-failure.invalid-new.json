@@ -1,0 +1,32 @@
+{
+  "schema_version": "failure.v1",
+  "failure_id": "019b0000-0000-7000-8000-000000000004",
+  "failure_fingerprint": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "event_key": null,
+  "stage": "ingestion",
+  "error_class": "malformed_rss",
+  "message": "RSS document could not be parsed into release items",
+  "retryable": false,
+  "attempt_count": 1,
+  "first_failed_at": "2026-07-20T12:35:10Z",
+  "last_failed_at": "2026-07-20T12:35:10Z",
+  "next_retry_at": null,
+  "payload": {},
+  "observability": {
+    "processing_attempt_id": "019b0000-0000-7000-8000-000000000004",
+    "analysis_trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+    "analysis_span_id": "00f067aa0ba902b7",
+    "trace_flags": "01",
+    "tracestate": null,
+    "stage_summary": [
+      {
+        "stage": "relevance",
+        "started_at": "2026-07-20T12:35:10Z",
+        "completed_at": "2026-07-20T12:35:10Z",
+        "outcome": "failed",
+        "attempt": 1,
+        "detail": "malformed_rss"
+      }
+    ]
+  }
+}

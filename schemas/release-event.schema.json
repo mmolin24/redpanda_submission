@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.pypi-intelligence/schemas/release-event.schema.json",
+  "title": "PyPI normalized release event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_key", "source", "package", "release", "ingested_at", "observability"],
+  "properties": {
+    "schema_version": { "const": "release-event.v1" },
+    "event_key": { "type": "string", "pattern": "^pypi:[a-z0-9]+(?:-[a-z0-9]+)*:.+$", "maxLength": 512 },
+    "source": { "const": "pypi-rss-updates" },
+    "package": {
+      "$ref": "file:///schemas/common-defs.schema.json#/$defs/packageRef"
+    },
+    "release": {
+      "$ref": "file:///schemas/common-defs.schema.json#/$defs/releaseRef"
+    },
+    "ingested_at": {
+      "$ref": "file:///schemas/common-defs.schema.json#/$defs/dateTime"
+    },
+    "observability": {
+      "$ref": "file:///schemas/common-defs.schema.json#/$defs/traceContext"
+    }
+  }
+}

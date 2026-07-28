@@ -1,0 +1,141 @@
+{
+  "uid": "pypi-failures",
+  "title": "PyPI Failure Operations",
+  "description": "DLQ publication, durable persistence, and infrastructure backpressure are shown as separate states.",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "10s",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Unresolved failure occurrences",
+      "description": "Every persisted occurrence remains visible, including its Redpanda coordinates and trace context.",
+      "datasource": { "type": "postgres", "uid": "pipeline-postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT last_failed_at AS time, failure_id, failure_fingerprint, event_key, stage, error_class, retryable, attempt_count, snapshot_truncated AS evidence_truncated, source_topic, source_partition, source_offset, analysis_trace_id FROM failure_occurrence_summaries WHERE resolved_at IS NULL ORDER BY last_failed_at DESC LIMIT 500"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "analysis_trace_id" },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open trace in Tempo",
+                    "url": "/explore?schemaVersion=1&panes=%7B%22trace%22:%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22${__value.raw}%22,%22queryType%22:%22traceql%22,%22refId%22:%22A%22,%22datasource%22:%7B%22type%22:%22tempo%22,%22uid%22:%22tempo%22%7D%7D%5D%7D%7D"
+                  }
+                ]
+              },
+              { "id": "custom.cellOptions", "value": { "type": "auto" } }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Unresolved fingerprint groups",
+      "description": "Groups repeated occurrences without hiding the individual rows above.",
+      "datasource": { "type": "postgres", "uid": "pipeline-postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT failure_fingerprint, stage, error_class, COUNT(*) AS occurrence_count, MIN(first_failed_at) AS first_seen, MAX(last_failed_at) AS last_seen FROM failure_occurrence_summaries WHERE resolved_at IS NULL GROUP BY failure_fingerprint, stage, error_class ORDER BY occurrence_count DESC, last_seen DESC LIMIT 250"
+        }
+      ],
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 12 }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Failure occurrence rate by stage and class",
+      "description": "Counts persisted failure occurrences by their first failure time.",
+      "datasource": { "type": "postgres", "uid": "pipeline-postgres" },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(first_failed_at, '5m'), stage || ' / ' || error_class AS metric, COUNT(*) AS value FROM failure_occurrence_summaries WHERE $__timeFilter(first_failed_at) GROUP BY 1, 2 ORDER BY 1"
+        }
+      ],
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 12 }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Truncated evidence occurrences",
+      "description": "Occurrences whose diagnostic snapshot reached the 256 KiB capture bound; full hashes and byte counts remain stored.",
+      "datasource": { "type": "postgres", "uid": "pipeline-postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT COUNT(*) AS value FROM failure_occurrence_summaries WHERE snapshot_truncated AND $__timeFilter(last_failed_at)"
+        }
+      ],
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 21 }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "DLQ routing decisions (5m)",
+      "description": "Valid record-level failure envelopes entering the DLQ path before broker acknowledgement. Persistence is reported separately.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(pypi_ingest_dlq_total{job=\"connect-source\"}[5m])) or vector(0)",
+          "legendFormat": "routing decisions"
+        }
+      ],
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 21 }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Source infrastructure backpressure (5m)",
+      "description": "The ready-minus-acknowledged gap is the authoritative pending-delivery signal. Output and connection failures remain diagnostic and never increment the DLQ counter.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(output_error{job=\"connect-source\",label=\"source_redpanda_delivery\"}[5m])) or vector(0)",
+          "legendFormat": "output errors"
+        },
+        {
+          "expr": "sum(increase(output_connection_failed{job=\"connect-source\",label=\"source_redpanda_delivery\"}[5m])) or vector(0)",
+          "legendFormat": "connection failures"
+        },
+        {
+          "expr": "clamp_min(sum(pypi_source_delivery_ready_total{job=\"connect-source\"}) - sum(output_sent{job=\"connect-source\",label=\"source_redpanda_delivery\"}), 0)",
+          "legendFormat": "pending broker acknowledgements"
+        },
+        {
+          "expr": "max(up{job=\"redpanda\"} == 0)",
+          "legendFormat": "broker unavailable"
+        }
+      ],
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 21 }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Persisted failure occurrences",
+      "description": "Safely persisted terminal failures that are durably stored and idempotently replayable; offset acknowledgement may follow the database commit.",
+      "datasource": { "type": "postgres", "uid": "pipeline-postgres" },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT COUNT(*) AS value FROM failure_occurrence_summaries WHERE $__timeFilter(last_failed_at)"
+        }
+      ],
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 21 }
+    }
+  ]
+}

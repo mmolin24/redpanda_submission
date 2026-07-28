@@ -1,0 +1,64 @@
+{
+  "uid": "pypi-reasoning",
+  "title": "PyPI Reasoning and OpenAI",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "trace_id",
+        "label": "Trace ID",
+        "type": "textbox",
+        "query": "",
+        "current": { "text": "", "value": "" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1, "type": "table", "title": "Recent model calls",
+      "datasource": { "type": "postgres", "uid": "pipeline-postgres" },
+      "targets": [{ "format": "table", "rawSql": "SELECT completed_at AS time, model_call_id, logical_purpose, outcome, requested_model, requested_service_tier, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, reasoning_tokens, estimated_cost_usd, analysis_trace_id FROM model_call_summaries ORDER BY completed_at DESC LIMIT 100" }],
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Estimated cost",
+      "datasource": { "type": "postgres", "uid": "pipeline-postgres" },
+      "targets": [{ "format": "table", "rawSql": "SELECT COALESCE(SUM(estimated_cost_usd),0) AS value FROM model_call_summaries WHERE completed_at > now() - interval '24 hours'" }],
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 12 }
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Logical model calls",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (purpose, outcome, service_tier) (rate(pypi_reasoning_model_calls_total[5m]))", "legendFormat": "{{purpose}} {{outcome}} {{service_tier}}" }],
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 12 }
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Model tokens",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (purpose, type) (rate(pypi_reasoning_model_tokens_total[5m]))", "legendFormat": "{{purpose}} {{type}}" }],
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 12 }
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Worker and model latency",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (outcome) (rate(pypi_reasoning_processing_duration_seconds_sum[5m])) / sum by (outcome) (rate(pypi_reasoning_processing_duration_seconds_count[5m]))", "legendFormat": "worker {{outcome}}" },
+        { "expr": "sum by (purpose, outcome) (rate(pypi_reasoning_model_duration_seconds_sum[5m])) / sum by (purpose, outcome) (rate(pypi_reasoning_model_duration_seconds_count[5m]))", "legendFormat": "model {{purpose}} {{outcome}}" }
+      ],
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 }
+    },
+    {
+      "id": 6, "type": "table", "title": "Model capture status for selected trace",
+      "description": "Model payload content remains restricted to the application role. This view reports whether local capture occurred alongside bounded usage and cost metadata.",
+      "datasource": { "type": "postgres", "uid": "pipeline-postgres" },
+      "targets": [{
+        "format": "table",
+        "rawSql": "SELECT completed_at AS time, logical_purpose, physical_attempt, requested_model, outcome, capture_status, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, reasoning_tokens, estimated_cost_usd FROM model_call_summaries WHERE (${trace_id:sqlstring} = '' OR analysis_trace_id = ${trace_id:sqlstring}) ORDER BY completed_at"
+      }],
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 28 }
+    }
+  ]
+}

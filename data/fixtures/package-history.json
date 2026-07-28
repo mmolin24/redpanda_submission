@@ -1,0 +1,232 @@
+{
+  "fixture_version": "deterministic-scenarios-v2",
+  "synthetic": true,
+  "events": [
+    {
+      "package": "boto3",
+      "version": "1.39.1",
+      "published_at": "2026-07-20T12:00:00Z",
+      "baseline": { "version": "1.39.0", "requires_python": ">=3.9", "requires_dist": ["botocore>=1.39.0,<1.40.0"] },
+      "candidate": { "requires_python": ">=3.9", "requires_dist": ["botocore>=1.39.1,<1.40.0"] },
+      "summary": "Synthetic fixture: the candidate raises the lower botocore dependency bound."
+    },
+    {
+      "package": "boto3",
+      "version": "1.40.0",
+      "published_at": "2026-07-20T12:01:00Z",
+      "baseline": { "version": "1.39.1", "requires_python": ">=3.9", "requires_dist": ["botocore>=1.39.1,<1.40.0"] },
+      "candidate": { "requires_python": ">=3.10", "requires_dist": ["botocore>=1.39.1,<1.40.0"] },
+      "summary": "Synthetic fixture: the candidate raises the declared minimum Python version."
+    },
+    {
+      "scenario_id": "R03",
+      "package": "urllib3",
+      "version": "2.6.0",
+      "published_at": "2026-07-20T12:02:00Z",
+      "baseline": { "version": "2.5.0", "requires_python": ">=3.9", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.10", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate raises the declared minimum Python version."
+    },
+    {
+      "scenario_id": "R02",
+      "package": "urllib3",
+      "version": "2.6.1",
+      "published_at": "2026-07-20T12:03:00Z",
+      "baseline": { "version": "2.6.0", "requires_python": ">=3.10", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.10", "requires_dist": [] },
+      "include_summary_context": false,
+      "summary": "R02 equivalent normalized release surface fixture."
+    },
+    {
+      "package": "requests",
+      "version": "2.32.5",
+      "published_at": "2026-07-20T12:04:00Z",
+      "baseline": { "version": "2.32.4", "requires_python": ">=3.8", "requires_dist": ["urllib3>=1.21.1,<3", "certifi>=2017.4.17", "idna>=2.5,<4", "charset-normalizer>=2,<4"] },
+      "candidate": { "requires_python": ">=3.8", "requires_dist": ["urllib3>=2,<3", "certifi>=2017.4.17", "idna>=2.5,<4", "charset-normalizer>=2,<4"] },
+      "summary": "Synthetic fixture: the candidate raises the lower urllib3 dependency bound."
+    },
+    {
+      "package": "requests",
+      "version": "2.33.0",
+      "published_at": "2026-07-20T12:05:00Z",
+      "baseline": { "version": "2.32.5", "requires_python": ">=3.8", "requires_dist": ["urllib3>=2,<3", "certifi>=2017.4.17", "idna>=2.5,<4", "charset-normalizer>=2,<4"] },
+      "candidate": { "requires_python": ">=3.9", "requires_dist": ["urllib3>=2,<3", "certifi>=2017.4.17", "idna>=2.5,<4", "charset-normalizer>=2,<4"] },
+      "summary": "Synthetic fixture: the candidate raises the declared minimum Python version."
+    },
+    {
+      "package": "setuptools",
+      "version": "80.9.1",
+      "published_at": "2026-07-20T12:06:00Z",
+      "baseline": { "version": "80.9.0", "requires_python": ">=3.9", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.9", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate changes the published wheel artifact without changing declared compatibility metadata."
+    },
+    {
+      "package": "setuptools",
+      "version": "81.0.0",
+      "published_at": "2026-07-20T12:07:00Z",
+      "baseline": { "version": "80.9.1", "requires_python": ">=3.9", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.10", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate raises the declared minimum Python version."
+    },
+    {
+      "package": "certifi",
+      "version": "2025.8.1",
+      "published_at": "2026-07-20T12:08:00Z",
+      "baseline": { "version": "2025.7.14", "requires_python": ">=3.7", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.7", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate changes the published wheel artifact without changing declared compatibility metadata."
+    },
+    {
+      "package": "certifi",
+      "version": "2026.1.1",
+      "published_at": "2026-07-20T12:09:00Z",
+      "baseline": { "version": "2025.8.1", "requires_python": ">=3.7", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.8", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate raises the declared minimum Python version."
+    },
+    {
+      "package": "typing-extensions",
+      "version": "4.14.2",
+      "published_at": "2026-07-20T12:10:00Z",
+      "baseline": { "version": "4.14.1", "requires_python": ">=3.9", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.9", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate changes the published wheel artifact without changing declared compatibility metadata."
+    },
+    {
+      "package": "typing-extensions",
+      "version": "4.15.0",
+      "published_at": "2026-07-20T12:11:00Z",
+      "baseline": { "version": "4.14.2", "requires_python": ">=3.9", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.10", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate raises the declared minimum Python version."
+    },
+    {
+      "package": "idna",
+      "version": "3.11",
+      "published_at": "2026-07-20T12:12:00Z",
+      "baseline": { "version": "3.10", "requires_python": ">=3.8", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.8", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate changes the published wheel artifact without changing declared compatibility metadata."
+    },
+    {
+      "package": "idna",
+      "version": "3.12",
+      "published_at": "2026-07-20T12:13:00Z",
+      "baseline": { "version": "3.11", "requires_python": ">=3.8", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.9", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate raises the declared minimum Python version."
+    },
+    {
+      "package": "charset-normalizer",
+      "version": "3.4.3",
+      "published_at": "2026-07-20T12:14:00Z",
+      "baseline": { "version": "3.4.2", "requires_python": ">=3.7", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.7", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate changes the published wheel artifact without changing declared compatibility metadata."
+    },
+    {
+      "package": "charset-normalizer",
+      "version": "3.5.0",
+      "published_at": "2026-07-20T12:15:00Z",
+      "baseline": { "version": "3.4.3", "requires_python": ">=3.7", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.8", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate raises the declared minimum Python version."
+    },
+    {
+      "package": "python-dateutil",
+      "version": "2.9.0.post1",
+      "published_at": "2026-07-20T12:16:00Z",
+      "baseline": { "version": "2.9.0.post0", "requires_python": ">=3.8", "requires_dist": ["six>=1.5"] },
+      "candidate": { "requires_python": ">=3.8", "requires_dist": ["six>=1.12"] },
+      "summary": "Synthetic fixture: the candidate raises the lower six dependency bound."
+    },
+    {
+      "package": "python-dateutil",
+      "version": "2.10.0",
+      "published_at": "2026-07-20T12:17:00Z",
+      "baseline": { "version": "2.9.0.post1", "requires_python": ">=3.8", "requires_dist": ["six>=1.12"] },
+      "candidate": { "requires_python": ">=3.9", "requires_dist": ["six>=1.12"] },
+      "summary": "Synthetic fixture: the candidate raises the declared minimum Python version."
+    },
+    {
+      "package": "six",
+      "version": "1.17.1",
+      "published_at": "2026-07-20T12:18:00Z",
+      "baseline": { "version": "1.17.0", "requires_python": ">=3.7", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.7", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate changes the published wheel artifact without changing declared compatibility metadata."
+    },
+    {
+      "package": "six",
+      "version": "1.18.0",
+      "published_at": "2026-07-20T12:19:00Z",
+      "baseline": { "version": "1.17.1", "requires_python": ">=3.7", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.8", "requires_dist": [] },
+      "summary": "Synthetic fixture: the candidate raises the declared minimum Python version."
+    },
+    {
+      "scenario_id": "R01",
+      "package": "boto3",
+      "version": "1.40.0rc1",
+      "published_at": "2026-07-20T12:20:00Z",
+      "baseline": { "version": "1.40.0", "requires_python": ">=3.10", "requires_dist": ["botocore>=1.39.1,<1.40.0"] },
+      "candidate": { "requires_python": ">=3.10", "requires_dist": ["botocore>=1.39.1,<1.40.0"] },
+      "summary": "R01 prerelease observation fixture."
+    },
+    {
+      "scenario_id": "R04",
+      "package": "cffi",
+      "version": "2.1.0",
+      "published_at": "2026-07-20T12:21:00Z",
+      "baseline": {
+        "version": "2.0.0",
+        "requires_python": ">=3.9",
+        "requires_dist": [],
+        "urls": [
+          { "filename": "cffi-2.0.0-cp311-cp311-manylinux_2_17_x86_64.whl", "packagetype": "bdist_wheel", "python_version": "cp311" },
+          { "filename": "cffi-2.0.0-cp311-cp311-win_amd64.whl", "packagetype": "bdist_wheel", "python_version": "cp311" }
+        ]
+      },
+      "candidate": {
+        "requires_python": ">=3.10",
+        "requires_dist": [],
+        "urls": [
+          { "filename": "cffi-2.1.0-cp311-cp311-manylinux_2_17_x86_64.whl", "packagetype": "bdist_wheel", "python_version": "cp311" }
+        ]
+      },
+      "summary": "R04 Python support and wheel-platform contraction fixture."
+    },
+    {
+      "scenario_id": "R05",
+      "package": "packaging",
+      "version": "26.2",
+      "published_at": "2026-07-20T12:22:00Z",
+      "baseline": { "version": "26.1", "requires_python": ">=3.10", "requires_dist": [] },
+      "candidate": { "requires_python": ">=3.9", "requires_dist": [] },
+      "summary": "R05 support-only Python expansion fixture."
+    },
+    {
+      "scenario_id": "R06",
+      "package": "pluggy",
+      "version": "1.6.1",
+      "published_at": "2026-07-20T12:23:00Z",
+      "baseline": {
+        "version": "1.6.0",
+        "requires_python": ">=3.9",
+        "requires_dist": [],
+        "urls": [
+          { "filename": "pluggy-1.6.0-py3-none-any.whl", "packagetype": "bdist_wheel", "python_version": "py3", "yanked": false }
+        ]
+      },
+      "candidate": {
+        "requires_python": ">=3.9",
+        "requires_dist": [],
+        "urls": [
+          { "filename": "pluggy-1.6.1-py3-none-any.whl", "packagetype": "bdist_wheel", "python_version": "py3", "yanked": true, "yanked_reason": "incorrect release" }
+        ]
+      },
+      "summary": "R06 yanked release fixture."
+    }
+  ]
+}

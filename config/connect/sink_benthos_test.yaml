@@ -1,0 +1,36 @@
+tests:
+  - name: invalid fingerprinted ingestion envelope remains errored
+    target_processors: sink.yaml#/pipeline/processors
+    input_batch:
+      - file_content: ./fixtures/ingest-failure.invalid-new.json
+        metadata:
+          kafka_topic: pypi.ingest-failures.v1
+          kafka_partition: "0"
+          kafka_offset: "10"
+          kafka_timestamp_ms: "1784637310000"
+    output_batches:
+      - - bloblang: 'errored() && this.failure_id == "019b0000-0000-7000-8000-000000000004"'
+
+  - name: unknown terminal schema remains errored
+    target_processors: sink.yaml#/pipeline/processors
+    input_batch:
+      - content: '{"schema_version":"unknown.v1"}'
+        metadata:
+          kafka_topic: pypi.failures.v1
+          kafka_partition: "0"
+          kafka_offset: "11"
+          kafka_timestamp_ms: "1784637310000"
+    output_batches:
+      - - bloblang: 'errored() && this.schema_version == "unknown.v1"'
+
+  - name: current failure retains immutable wire JSON
+    target_processors: sink.yaml#/pipeline/processors
+    input_batch:
+      - file_content: ./fixtures/ingest-failure.valid-new.json
+        metadata:
+          kafka_topic: pypi.ingest-failures.v1
+          kafka_partition: "1"
+          kafka_offset: "12"
+          kafka_timestamp_ms: "1784637310000"
+    output_batches:
+      - - bloblang: 'this._lineage.raw_failure.parse_json().observability.stage_summary.length() == 1 && this.observability.stage_summary.length() == 3 && !this._lineage.raw_failure.parse_json().exists("_lineage") && !errored()'

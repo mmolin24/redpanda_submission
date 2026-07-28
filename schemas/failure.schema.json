@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.pypi-intelligence/schemas/failure.schema.json",
+  "title": "Terminal processing failure",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "failure_id", "failure_fingerprint", "event_key", "stage", "error_class", "message", "retryable", "attempt_count", "first_failed_at", "last_failed_at", "next_retry_at", "payload", "observability"],
+  "properties": {
+    "schema_version": { "const": "failure.v1" },
+    "failure_id": { "type": "string", "format": "uuid" },
+    "failure_fingerprint": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "event_key": { "type": ["string", "null"], "maxLength": 512 },
+    "stage": {
+      "enum": [
+        "ingestion", "enrichment", "routing", "materiality",
+        "applicability", "customer_impact", "publication", "sink"
+      ]
+    },
+    "error_class": { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 128 },
+    "message": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "retryable": { "type": "boolean" },
+    "attempt_count": { "type": "integer", "minimum": 1 },
+    "first_failed_at": {
+      "$ref": "file:///schemas/common-defs.schema.json#/$defs/dateTime"
+    },
+    "last_failed_at": {
+      "$ref": "file:///schemas/common-defs.schema.json#/$defs/dateTime"
+    },
+    "next_retry_at": {
+      "$ref": "file:///schemas/common-defs.schema.json#/$defs/nullableDateTime"
+    },
+    "payload": { "type": "object" },
+    "observability": {
+      "$ref": "file:///schemas/common-defs.schema.json#/$defs/traceContext"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": "failure.v1",
+  "failure_id": "019b0000-0000-7000-8000-000000000005",
+  "failure_fingerprint": "sha256:0446b72d4b827f8ba54bac10394a7c94cd4067b4fd664b1c92225542d3e86ac4",
+  "event_key": null,
+  "stage": "ingestion",
+  "error_class": "malformed_rss",
+  "message": "RSS document could not be parsed into release items",
+  "retryable": false,
+  "attempt_count": 1,
+  "first_failed_at": "2026-07-20T12:35:10Z",
+  "last_failed_at": "2026-07-20T12:35:10Z",
+  "next_retry_at": null,
+  "payload": {
+    "input_kind": "rss_document",
+    "content_sha256": "20b2d5a53f398191f54d447c1b86f01575149cee415c47768e43bcc26d624efc",
+    "original_bytes": 7,
+    "captured_bytes": 7,
+    "snapshot_base64": "YmFkIHhtbA==",
+    "snapshot_encoding": "base64",
+    "truncated": false,
+    "source": "pypi-rss-updates",
+    "content_type": "application/rss+xml",
+    "error_source_name": "parse_xml",
+    "error_source_label": "parse_rss_document",
+    "error_source_path": "pipeline.processors.parse_rss_document"
+  },
+  "observability": {
+    "processing_attempt_id": "019b0000-0000-7000-8000-000000000005",
+    "analysis_trace_id": "5cf92f3577b34da6a3ce929d0e0e4737",
+    "analysis_span_id": "10f067aa0ba902b8",
+    "trace_flags": "01",
+    "tracestate": null,
+    "stage_summary": [
+      {
+        "stage": "relevance",
+        "started_at": "2026-07-20T12:35:10Z",
+        "completed_at": "2026-07-20T12:35:10Z",
+        "outcome": "failed",
+        "attempt": 1,
+        "detail": "malformed_rss"
+      }
+    ]
+  }
+}

@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>PyPI recent updates - deterministic top-ten history</title>
+    <description>Synthetic local fixture data for ten monitored packages.</description>
+    <item>
+      <title>boto3 1.39.1</title>
+      <link>https://pypi.org/project/boto3/1.39.1/</link>
+      <pubDate>Sun, 20 Jul 2026 12:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>boto3 1.40.0</title>
+      <link>https://pypi.org/project/boto3/1.40.0/</link>
+      <pubDate>Sun, 20 Jul 2026 12:01:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>urllib3 2.6.0</title>
+      <link>https://pypi.org/project/urllib3/2.6.0/</link>
+      <pubDate>Sun, 20 Jul 2026 12:02:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>urllib3 2.6.0</title>
+      <link>https://pypi.org/project/urllib3/2.6.0/</link>
+      <pubDate>Sun, 20 Jul 2026 12:02:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>urllib3 2.6.1</title>
+      <link>https://pypi.org/project/urllib3/2.6.1/</link>
+      <pubDate>Sun, 20 Jul 2026 12:03:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>requests 2.32.5</title>
+      <link>https://pypi.org/project/requests/2.32.5/</link>
+      <pubDate>Sun, 20 Jul 2026 12:04:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>requests 2.33.0</title>
+      <link>https://pypi.org/project/requests/2.33.0/</link>
+      <pubDate>Sun, 20 Jul 2026 12:05:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>setuptools 80.9.1</title>
+      <link>https://pypi.org/project/setuptools/80.9.1/</link>
+      <pubDate>Sun, 20 Jul 2026 12:06:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>setuptools 81.0.0</title>
+      <link>https://pypi.org/project/setuptools/81.0.0/</link>
+      <pubDate>Sun, 20 Jul 2026 12:07:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>certifi 2025.8.1</title>
+      <link>https://pypi.org/project/certifi/2025.8.1/</link>
+      <pubDate>Sun, 20 Jul 2026 12:08:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>certifi 2026.1.1</title>
+      <link>https://pypi.org/project/certifi/2026.1.1/</link>
+      <pubDate>Sun, 20 Jul 2026 12:09:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>typing-extensions 4.14.2</title>
+      <link>https://pypi.org/project/typing-extensions/4.14.2/</link>
+      <pubDate>Sun, 20 Jul 2026 12:10:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>typing-extensions 4.15.0</title>
+      <link>https://pypi.org/project/typing-extensions/4.15.0/</link>
+      <pubDate>Sun, 20 Jul 2026 12:11:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>idna 3.11</title>
+      <link>https://pypi.org/project/idna/3.11/</link>
+      <pubDate>Sun, 20 Jul 2026 12:12:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>idna 3.12</title>
+      <link>https://pypi.org/project/idna/3.12/</link>
+      <pubDate>Sun, 20 Jul 2026 12:13:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>charset-normalizer 3.4.3</title>
+      <link>https://pypi.org/project/charset-normalizer/3.4.3/</link>
+      <pubDate>Sun, 20 Jul 2026 12:14:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>charset-normalizer 3.5.0</title>
+      <link>https://pypi.org/project/charset-normalizer/3.5.0/</link>
+      <pubDate>Sun, 20 Jul 2026 12:15:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>python-dateutil 2.9.0.post1</title>
+      <link>https://pypi.org/project/python-dateutil/2.9.0.post1/</link>
+      <pubDate>Sun, 20 Jul 2026 12:16:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>python-dateutil 2.10.0</title>
+      <link>https://pypi.org/project/python-dateutil/2.10.0/</link>
+      <pubDate>Sun, 20 Jul 2026 12:17:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>six 1.17.1</title>
+      <link>https://pypi.org/project/six/1.17.1/</link>
+      <pubDate>Sun, 20 Jul 2026 12:18:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>six 1.18.0</title>
+      <link>https://pypi.org/project/six/1.18.0/</link>
+      <pubDate>Sun, 20 Jul 2026 12:19:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>boto3 1.40.0rc1</title>
+      <link>https://pypi.org/project/boto3/1.40.0rc1/</link>
+      <pubDate>Sun, 20 Jul 2026 12:20:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>cffi 2.1.0</title>
+      <link>https://pypi.org/project/cffi/2.1.0/</link>
+      <pubDate>Sun, 20 Jul 2026 12:21:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>packaging 26.2</title>
+      <link>https://pypi.org/project/packaging/26.2/</link>
+      <pubDate>Sun, 20 Jul 2026 12:22:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>pluggy 1.6.1</title>
+      <link>https://pypi.org/project/pluggy/1.6.1/</link>
+      <pubDate>Sun, 20 Jul 2026 12:23:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>unmonitored-example 1.0.0</title>
+      <link>https://pypi.org/project/unmonitored-example/1.0.0/</link>
+      <description>This item must be dropped by source relevance filtering.</description>
+      <pubDate>Sun, 20 Jul 2026 12:24:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>malformed item</title>
+      <link>https://example.invalid/not-pypi</link>
+      <pubDate>Sun, 20 Jul 2026 12:25:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

@@ -1,0 +1,33 @@
+services:
+  redpanda:
+    ports:
+      - "127.0.0.1:${REDPANDA_ADMIN_PORT-}:9644"
+
+  connect-source:
+    ports:
+      - "127.0.0.1:${CONNECT_SOURCE_PORT-}:4195"
+
+  reasoning-worker:
+    ports:
+      - "127.0.0.1:${REASONING_HEALTH_PORT-}:8090"
+      - "127.0.0.1:${REASONING_METRICS_PORT-}:8001"
+
+  connect-sink:
+    ports:
+      - "127.0.0.1:${CONNECT_SINK_PORT-}:4196"
+
+  connect-trace-bridge:
+    ports:
+      - "127.0.0.1:${CONNECT_TRACE_BRIDGE_PORT-}:4197"
+
+  tempo:
+    ports:
+      - "127.0.0.1:${TEMPO_PORT-}:3200"
+
+  loki:
+    ports:
+      - "127.0.0.1:${LOKI_PORT-}:3100"
+
+  prometheus:
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT-}:9090"
