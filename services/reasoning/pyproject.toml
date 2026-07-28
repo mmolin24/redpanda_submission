@@ -21,7 +21,7 @@ runtime = [
   "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
 ]
 test = [
-  "jsonschema[format-nongpl]>=4.23,<5",
+  "jsonschema[format-nongpl]>=4.26.0,<5",
   "license-expression==30.4.4",
   "pytest>=8.3,<10",
 ]

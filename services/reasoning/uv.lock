@@ -653,7 +653,7 @@ test = [
 requires-dist = [
     { name = "confluent-kafka", marker = "extra == 'kafka'", specifier = ">=2.8,<3" },
     { name = "confluent-kafka", marker = "extra == 'runtime'", specifier = ">=2.8,<3" },
-    { name = "jsonschema", extras = ["format-nongpl"], marker = "extra == 'test'", specifier = ">=4.23,<5" },
+    { name = "jsonschema", extras = ["format-nongpl"], marker = "extra == 'test'", specifier = ">=4.26.0,<5" },
     { name = "license-expression", marker = "extra == 'test'", specifier = "==30.4.4" },
     { name = "openai", specifier = ">=2.16,<3" },
     { name = "opentelemetry-api", specifier = ">=1.30,<2" },
