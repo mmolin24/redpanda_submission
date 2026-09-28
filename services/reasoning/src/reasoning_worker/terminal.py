@@ -14,8 +14,6 @@ from .models import (
     FailureStage,
     Finding,
     Json,
-    ReleaseEvent,
-    ReleaseEventContractError,
     utc_now,
 )
 from .sanitization import bounded_text, sanitize
@@ -253,7 +251,6 @@ def prepare_terminal(
     if max_bytes <= 0:
         raise ValueError("max_bytes must be positive")
     original_key = _terminal_key(terminal)
-    _source_event(terminal)
     original_value = encode_json_bytes(terminal.to_dict())
     if len(original_value) <= max_bytes:
         return PreparedTerminal(
@@ -319,9 +316,7 @@ def _oversized_failure(
             source_event,
             source_bytes,
         )
-        source_identity = _source_event_identity(source_event)
-        if source_identity:
-            payload["source_event_identity"] = source_identity
+        payload["source_event_identity"] = _source_event_identity(source_event)
         if len(source_bytes) <= _COMPACT_SOURCE_EVENT_MAX_BYTES:
             payload["source_event"] = source_event
 
@@ -392,44 +387,17 @@ def _oversized_failure(
 
 def _source_event(terminal: Finding | FailureRecord) -> Json | None:
     if isinstance(terminal, Finding):
-        value = terminal.source_event
-    else:
-        if "source_event" not in terminal.payload:
-            return None
-        value = terminal.payload["source_event"]
-    if not isinstance(value, dict):
-        raise TerminalEncodingError(
-            "terminal source_event does not satisfy the publication contract"
-        )
-    try:
-        ReleaseEvent.from_dict(value)
-    except ReleaseEventContractError as exc:
-        raise TerminalEncodingError(
-            "terminal source_event does not satisfy the publication contract"
-        ) from exc
-    return value
+        return terminal.source_event
+    return terminal.payload["source_event"] if "source_event" in terminal.payload else None
 
 
 def _source_event_identity(source_event: Json) -> Json:
-    identity: Json = {}
-    for source_key, target_key in (
-        ("schema_version", "schema_version"),
-        ("event_key", "event_key"),
-    ):
-        value = source_event.get(source_key)
-        if isinstance(value, str):
-            identity[target_key] = value
-    package = source_event.get("package")
-    if isinstance(package, dict):
-        normalized_name = package.get("normalized_name")
-        if isinstance(normalized_name, str):
-            identity["package"] = normalized_name
-    release = source_event.get("release")
-    if isinstance(release, dict):
-        version = release.get("version")
-        if isinstance(version, str):
-            identity["release"] = version
-    return identity
+    return {
+        "schema_version": source_event["schema_version"],
+        "event_key": source_event["event_key"],
+        "package": source_event["package"]["normalized_name"],
+        "release": source_event["release"]["version"],
+    }
 
 
 def _model_calls(terminal: Finding | FailureRecord) -> list[Json]:

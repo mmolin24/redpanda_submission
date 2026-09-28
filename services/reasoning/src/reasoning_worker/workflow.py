@@ -7,6 +7,9 @@ from dataclasses import asdict, dataclass
 from time import monotonic
 from typing import Any, Protocol
 
+from packaging.utils import parse_wheel_filename
+from packaging.version import Version
+
 from .deterministic_impact import compile_deterministic_impact
 from .evidence import ExactReleaseNotFound
 from .ids import deterministic_id, opaque_id, sha256_json
@@ -150,7 +153,7 @@ class ReasoningPipeline:
             )
         try:
             evidence = self._stage(stages, "enrichment", lambda: self.enricher.enrich(event))
-            is_prerelease = _is_prerelease(event.release.version)
+            is_prerelease = Version(event.release.version).is_prerelease
             routing = self._stage(
                 stages,
                 "routing",
@@ -561,15 +564,6 @@ class ReasoningPipeline:
         )
 
 
-def _is_prerelease(version: str) -> bool:
-    try:
-        from packaging.version import Version
-
-        return Version(version).is_prerelease
-    except (ImportError, ValueError):
-        return False
-
-
 def _retryable_processing_error(exc: Exception) -> bool:
     status = getattr(exc, "code", None)
     if status in {408, 409, 429} or (isinstance(status, int) and status >= 500):
@@ -704,11 +698,6 @@ def _distribution_surface(files: Any) -> tuple[tuple[str, ...], ...] | None:
 
 
 def _distribution_signature(filename: str, package_type: str) -> tuple[str, ...] | None:
-    try:
-        from packaging.utils import parse_wheel_filename
-    except ImportError:  # pragma: no cover - dependency setup guard
-        return None
-
     if package_type == "bdist_wheel" and filename.endswith(".whl"):
         try:
             _, _, build, tags = parse_wheel_filename(filename)

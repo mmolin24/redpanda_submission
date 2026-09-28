@@ -283,6 +283,7 @@ def test_oversized_failure_uses_the_same_non_recursive_fallback():
         "error_class": terminal.error_class,
         "retryable": terminal.retryable,
     }
+    assert "source_event" not in document["payload"]
     assert "xxxxxxxx" not in prepared.value.decode()
 
 
@@ -389,7 +390,7 @@ def test_large_source_event_retains_identity_and_full_content_manifest():
     }
 
 
-def test_normal_terminal_rejects_a_source_event_outside_the_wire_contract():
+def test_normal_terminal_preserves_source_event():
     terminal = _finding(padding_bytes=1)
     terminal = replace(
         terminal,
@@ -399,8 +400,11 @@ def test_normal_terminal_rejects_a_source_event_outside_the_wire_contract():
         },
     )
 
-    with pytest.raises(TerminalEncodingError, match="source_event"):
-        prepare_terminal(
-            terminal,
-            intended_topic="pypi.findings.v1",
-        )
+    prepared = prepare_terminal(
+        terminal,
+        intended_topic="pypi.findings.v1",
+    )
+
+    assert prepared.terminal is terminal
+    assert prepared.value == encode_json_bytes(terminal.to_dict())
+    assert json.loads(prepared.value)["source_event"] == terminal.source_event

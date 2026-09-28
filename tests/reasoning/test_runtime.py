@@ -689,26 +689,18 @@ def test_invalid_release_payload_becomes_terminal_failure_then_commits():
     "invalid_value",
     [
         pytest.param(
-            lambda document: document["release"].update(
-                {"url": "https://example.invalid/project/dependency-b/"}
-            ),
-            id="wire-contract",
+            lambda document: document.update({"schema_version": "release-event.v2"}),
+            id="unsupported-schema-version",
+        ),
+        pytest.param(
+            lambda document: document["package"].pop("normalized_name"),
+            id="missing-required-field",
         ),
         pytest.param(
             lambda document: document["observability"]["stage_summary"][0].update(
                 {"non_finite": float("nan")}
             ),
             id="non-standard-json-constant",
-        ),
-        pytest.param(
-            lambda document: document.update({"ingested_at": "9999-12-31T23:59:60-01:00"}),
-            id="rfc3339-shift-overflow",
-        ),
-        pytest.param(
-            lambda document: document["release"].update(
-                {"url": ("https://pypi.org/project/dependency-b/[invalid-path-brackets]")}
-            ),
-            id="malformed-uri-delimiter",
         ),
     ],
 )
@@ -743,6 +735,61 @@ def test_invalid_release_short_circuits_the_pipeline_before_commit(
     assert consumer.committed == [record]
 
 
+def test_release_event_decode_trusts_connect_validated_field_content():
+    release_event = event()
+    document = release_event.to_dict()
+    document["source"] = "another-source"
+    document["release"].update(
+        {
+            "published_at": "source-owned timestamp",
+            "url": "source-owned URL",
+        }
+    )
+    document["ingested_at"] = "source-owned ingestion time"
+    record = ConsumerRecord(
+        topic="pypi.releases.v1",
+        partition=0,
+        offset=2,
+        key=release_event.event_key,
+        value=json.dumps(document),
+        headers=[],
+    )
+    consumer = Consumer(record)
+    publisher = Publisher()
+    worker, _, _ = runtime()
+    terminal = worker.pipeline.process(release_event)
+
+    class RecordingPipeline(FixedTerminalPipeline):
+        def __init__(self, terminal: Finding | FailureRecord):
+            super().__init__(terminal)
+            self.received_event: ReleaseEvent | None = None
+
+        def process(
+            self,
+            event: ReleaseEvent,
+            /,
+            *,
+            processing_attempt_id: str | None = None,
+            trace_context: TraceContext | None = None,
+        ) -> Finding | FailureRecord:
+            self.received_event = event
+            return self.terminal
+
+    pipeline = RecordingPipeline(terminal)
+    worker = ReasoningWorker(consumer, publisher, pipeline)
+
+    assert worker.run_once() is True
+
+    assert pipeline.received_event is not None
+    assert pipeline.received_event.event_key == release_event.event_key
+    assert pipeline.received_event.source == document["source"]
+    assert pipeline.received_event.release.published_at == "source-owned timestamp"
+    assert pipeline.received_event.release.url == "source-owned URL"
+    assert pipeline.received_event.ingested_at == "source-owned ingestion time"
+    assert publisher.published[0]["topic"] == "pypi.findings.v1"
+    assert consumer.committed == [record]
+
+
 def test_unexpected_release_parser_error_is_systemic_and_uncommitted(
     monkeypatch,
 ):
@@ -765,28 +812,6 @@ def test_unexpected_release_parser_error_is_systemic_and_uncommitted(
 
     with pytest.raises(ValueError, match="implementation defect"):
         ReasoningWorker(consumer, publisher, NeverCalledPipeline()).run_once()
-    assert publisher.published == []
-    assert consumer.committed == []
-
-
-def test_invalid_nested_source_event_is_systemic_and_uncommitted():
-    worker, consumer, publisher = runtime()
-    terminal = worker.pipeline.process(event())
-    assert isinstance(terminal, Finding)
-    worker.pipeline = FixedTerminalPipeline(
-        replace(
-            terminal,
-            source_event={
-                **terminal.source_event,
-                "unexpected_root_field": True,
-            },
-        )
-    )
-
-    with pytest.raises(ProcessingBackpressure) as error:
-        worker.run_once()
-
-    assert error.value.error_class == "terminal_encoding_invalid"
     assert publisher.published == []
     assert consumer.committed == []
 
