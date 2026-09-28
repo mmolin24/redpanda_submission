@@ -223,6 +223,27 @@ def test_finding_fixture_embeds_the_authoritative_release_event() -> None:
         pytest.param(
             "release-event.schema.json",
             "release-event.valid.json",
+            ("event_key",),
+            "not-a-pypi-event-key",
+            id="release-event-key-pattern",
+        ),
+        pytest.param(
+            "release-event.schema.json",
+            "release-event.valid.json",
+            ("source",),
+            "another-source",
+            id="release-event-source-const",
+        ),
+        pytest.param(
+            "release-event.schema.json",
+            "release-event.valid.json",
+            ("package", "normalized_name"),
+            "Invalid_Name",
+            id="release-event-normalized-package-name",
+        ),
+        pytest.param(
+            "release-event.schema.json",
+            "release-event.valid.json",
             ("ingested_at",),
             "2026-02-30T12:00:00Z",
             id="release-event-date-time",
@@ -235,6 +256,13 @@ def test_finding_fixture_embeds_the_authoritative_release_event() -> None:
             id="release-event-uri",
         ),
         pytest.param(
+            "release-event.schema.json",
+            "release-event.valid.json",
+            ("observability", "analysis_trace_id"),
+            "not-a-trace-id",
+            id="release-event-trace-id",
+        ),
+        pytest.param(
             "failure.schema.json",
             "failure.valid.json",
             ("failure_id",),
@@ -243,7 +271,7 @@ def test_finding_fixture_embeds_the_authoritative_release_event() -> None:
         ),
     ],
 )
-def test_format_mutations_are_rejected_at_the_expected_field(
+def test_schema_field_mutations_are_rejected_at_the_expected_field(
     schema_name: str,
     fixture_name: str,
     path: tuple[str, ...],

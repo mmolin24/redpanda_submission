@@ -12,6 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.version import InvalidVersion, Version
+
 from .artifacts import ArchiveInspector, UnsafeArtifact, diff_snapshots
 from .ids import sha256_json
 from .models import (
@@ -84,11 +87,6 @@ def select_baseline_version(
     project: Json, candidate_version: str, candidate_uploaded_at: str | None
 ) -> str | None:
     """Select the highest non-yanked final release uploaded before the candidate."""
-    try:
-        from packaging.version import InvalidVersion, Version
-    except ImportError as exc:  # pragma: no cover - dependency setup guard
-        raise RuntimeError("packaging is required for baseline selection") from exc
-
     candidate_time = _parse_time(candidate_uploaded_at)
     candidates: list[Version] = []
     releases = project.get("releases", {})
@@ -125,11 +123,6 @@ def _parse_time(value: str | None) -> datetime | None:
 def _requires_dist_map(values: list[str] | None) -> dict[str, str]:
     if not values:
         return {}
-    try:
-        from packaging.requirements import InvalidRequirement, Requirement
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError("packaging is required for dependency evidence") from exc
-
     result: dict[str, str] = {}
     for raw in values:
         try:
@@ -155,10 +148,10 @@ class MetadataEvidenceBuilder:
         provenance: Iterable[Json] = (),
         collection_status: EvidenceCollectionStatus = "complete",
     ) -> EvidenceBundle:
-        baseline_info = compact_metadata(baseline_response.get("info", {}))
-        candidate_info = compact_metadata(candidate_response.get("info", {}))
-        baseline_files = _file_facts(baseline_response.get("urls", []))
-        candidate_files = _file_facts(candidate_response.get("urls", []))
+        baseline_info = compact_metadata(baseline_response["info"])
+        candidate_info = compact_metadata(candidate_response["info"])
+        baseline_files = _file_facts(baseline_response["urls"])
+        candidate_files = _file_facts(candidate_response["urls"])
         baseline_dist = _requires_dist_map(baseline_info.get("requires_dist"))
         candidate_dist = _requires_dist_map(candidate_info.get("requires_dist"))
         dependency_names = sorted(set(baseline_dist) | set(candidate_dist))
@@ -182,8 +175,8 @@ class MetadataEvidenceBuilder:
             "after": any(bool(f.get("yanked")) for f in candidate_files),
         }
         vulnerability_diff = {
-            "before_count": len(baseline_response.get("vulnerabilities", [])),
-            "after_count": len(candidate_response.get("vulnerabilities", [])),
+            "before_count": len(baseline_response["vulnerabilities"]),
+            "after_count": len(candidate_response["vulnerabilities"]),
         }
         computed: Json = {
             "requires_python_diff": requires_python_diff
@@ -205,15 +198,15 @@ class MetadataEvidenceBuilder:
             "missing": [],
         }
         baseline = {
-            "version": baseline_info.get("version"),
+            "version": baseline_info["version"],
             "metadata": baseline_info,
             "files": baseline_files,
         }
         candidate = {
-            "version": candidate_info.get("version", event.release.version),
+            "version": candidate_info["version"],
             "metadata": candidate_info,
             "files": candidate_files,
-            "vulnerabilities": candidate_response.get("vulnerabilities", []),
+            "vulnerabilities": candidate_response["vulnerabilities"],
         }
         sanitized = sanitize_with_report(
             {
@@ -225,18 +218,11 @@ class MetadataEvidenceBuilder:
             }
         )
         safe_payload = sanitized.value
-        if not isinstance(safe_payload, dict):
-            raise RuntimeError("sanitization must preserve the evidence object root")
         safe_baseline = safe_payload["baseline"]
         safe_candidate = safe_payload["candidate"]
         safe_computed = safe_payload["computed"]
         safe_context = safe_payload["context"]
         safe_provenance = safe_payload["provenance"]
-        if not all(
-            isinstance(item, dict)
-            for item in (safe_baseline, safe_candidate, safe_computed, safe_context)
-        ) or not isinstance(safe_provenance, list):
-            raise RuntimeError("sanitization must preserve evidence container types")
         sanitization_report = sanitized.report.to_dict()
         facts = self._facts(
             safe_baseline,
@@ -481,9 +467,7 @@ class PyPIEnricher:
             raise ExactReleaseNotFound from exc
         project = self.fetcher.fetch_json(project_url)
         uploads = [
-            value
-            for item in candidate.get("urls", [])
-            if (value := item.get("upload_time_iso_8601"))
+            value for item in candidate["urls"] if (value := item.get("upload_time_iso_8601"))
         ]
         baseline_version = select_baseline_version(
             project,
@@ -519,8 +503,8 @@ class PyPIEnricher:
             )
         context: Json = {"repository_mapping_confidence": "unavailable"}
         if baseline_version and self.byte_fetcher:
-            baseline_artifact = _select_artifact(baseline.get("urls", []))
-            candidate_artifact = _select_artifact(candidate.get("urls", []))
+            baseline_artifact = _select_artifact(baseline["urls"])
+            candidate_artifact = _select_artifact(candidate["urls"])
             if baseline_artifact and candidate_artifact:
                 try:
                     before_bytes = self.byte_fetcher.fetch_bytes(

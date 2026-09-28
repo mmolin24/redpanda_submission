@@ -264,8 +264,8 @@ processor_resources:
                 processors:
                   - resource: source_build_ingest_failure
 
-          # Validate release fields before relevance can
-          # intentionally delete an unmonitored package.
+          # Validate releases before relevance can intentionally delete an
+          # unmonitored package.
           - label: validate_release_candidate_contract
             switch:
               - check: 'this.schema_version == "release-event.v1"'
@@ -273,7 +273,7 @@ processor_resources:
                   - try_catch:
                       processors:
                         - json_schema:
-                            schema_path: file:///schemas/release-candidate.schema.json
+                            schema_path: file:///schemas/release-event.schema.json
                       catch:
                         - mapping: |
                             meta failure_error_class = "invalid_release_event"
@@ -321,22 +321,6 @@ processor_resources:
               - label: remove_irrelevant_release
                 mapping: |
                   root = if meta("relevance_decision") == "irrelevant" { deleted() } else { this }
-
-              - label: validate_release_contract
-                switch:
-                  - check: 'this.schema_version == "release-event.v1"'
-                    processors:
-                      - try_catch:
-                          processors:
-                            - json_schema:
-                                schema_path: file:///schemas/release-event.schema.json
-                          catch:
-                            - mapping: |
-                                meta failure_error_class = "invalid_release_event"
-                                meta failure_message = "RSS item did not satisfy the normalized release contract"
-                                root = this
-                            - resource: source_build_ingest_failure
-                          error_metadata: error
 
               # Failure validation is not recoverable. If the producer ever
               # creates an invalid envelope, the input remains unacknowledged.

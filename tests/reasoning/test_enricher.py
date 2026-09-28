@@ -76,6 +76,9 @@ def test_pypi_enricher_selects_baseline_by_upload_time_not_arrival_order():
                 "1.8.0": [{"upload_time_iso_8601": "2026-01-01T00:00:00Z", "yanked": False}],
                 "1.9.0": [{"upload_time_iso_8601": "2026-07-01T00:00:00Z", "yanked": False}],
                 "2.1.0": [{"upload_time_iso_8601": "2026-08-01T00:00:00Z", "yanked": False}],
+                "legacy release": [
+                    {"upload_time_iso_8601": "2025-01-01T00:00:00Z", "yanked": False}
+                ],
             }
         },
         f"{base}/1.9.0/json": {
@@ -193,3 +196,41 @@ def test_only_missing_candidate_metadata_is_an_exact_release_failure():
     with pytest.raises(FileNotFoundError) as error:
         PyPIEnricher(fetcher).enrich(release_event)
     assert not isinstance(error.value, ExactReleaseNotFound)
+
+
+def test_missing_project_release_history_keeps_evidence_partial():
+    release_event = event()
+    base = "https://pypi.org/pypi/dependency-b"
+    candidate = {
+        "info": {"name": "dependency-b", "version": "2.0.0"},
+        "urls": [],
+        "vulnerabilities": [],
+    }
+    bundle = PyPIEnricher(
+        Fetcher(
+            {
+                f"{base}/2.0.0/json": candidate,
+                f"{base}/json": {"info": {"name": "dependency-b"}},
+            }
+        )
+    ).enrich(release_event)
+
+    assert bundle.baseline["version"] is None
+    assert bundle.collection_status == "partial"
+
+
+def test_missing_required_release_urls_fails_at_the_response_boundary():
+    release_event = event()
+    base = "https://pypi.org/pypi/dependency-b"
+    with pytest.raises(KeyError, match="urls"):
+        PyPIEnricher(
+            Fetcher(
+                {
+                    f"{base}/2.0.0/json": {
+                        "info": {"name": "dependency-b", "version": "2.0.0"},
+                        "vulnerabilities": [],
+                    },
+                    f"{base}/json": {"releases": {}},
+                }
+            )
+        ).enrich(release_event)

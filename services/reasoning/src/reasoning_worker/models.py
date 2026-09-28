@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import re
 import secrets
-from calendar import monthrange
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Literal, cast
-from urllib.parse import urlsplit
+from typing import Any, Literal
 
 Json = dict[str, Any]
 AnalysisMethod = Literal["deterministic", "model_assisted"]
@@ -98,30 +95,9 @@ CHANGE_TYPES = {
     "unknown",
 }
 
-_EVENT_KEY_PATTERN = re.compile(r"^pypi:[a-z0-9]+(?:-[a-z0-9]+)*:.+$")
-_NORMALIZED_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-_TRACE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
-_SPAN_ID_PATTERN = re.compile(r"^[0-9a-f]{16}$")
-_TRACE_FLAGS_PATTERN = re.compile(r"^[0-9a-f]{2}$")
-_RFC3339_PATTERN = re.compile(
-    r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])[Tt]"
-    r"(?:[01]\d|2[0-3]):[0-5]\d:(?:[0-5]\d|60)"
-    r"(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)$"
-)
-_URI_CHARACTER_PATTERN = re.compile(r"^[A-Za-z0-9\-._~:/?#@!$&'()*+,;=%]+$")
-_URI_PATH_PATTERN = re.compile(r"^(?:/[A-Za-z0-9\-._~!$&'()*+,;=:@%]*)*$")
-_URI_QUERY_FRAGMENT_PATTERN = re.compile(r"^[A-Za-z0-9\-._~!$&'()*+,;=:@%/?]*$")
-_INVALID_PERCENT_ESCAPE_PATTERN = re.compile(r"%(?![0-9A-Fa-f]{2})")
-
 
 class ReleaseEventContractError(ValueError):
     """A release-topic value does not satisfy release-event.v1."""
-
-
-def _contract_error(path: str) -> ReleaseEventContractError:
-    return ReleaseEventContractError(
-        f"release event field {path} does not satisfy release-event.v1"
-    )
 
 
 def _require_object(
@@ -129,79 +105,12 @@ def _require_object(
     *,
     path: str,
     required: frozenset[str],
-    optional: frozenset[str] = frozenset(),
 ) -> Json:
-    if not isinstance(value, dict):
-        raise _contract_error(path)
-    actual = set(value)
-    if not required.issubset(actual) or not actual.issubset(required | optional):
-        raise _contract_error(path)
+    if not isinstance(value, dict) or not required.issubset(value):
+        raise ReleaseEventContractError(
+            f"release event is missing required object structure at {path}"
+        )
     return value
-
-
-def _require_string(
-    value: object,
-    *,
-    path: str,
-    minimum: int = 0,
-    maximum: int | None = None,
-    pattern: re.Pattern[str] | None = None,
-) -> str:
-    if not isinstance(value, str):
-        raise _contract_error(path)
-    if len(value) < minimum or (maximum is not None and len(value) > maximum):
-        raise _contract_error(path)
-    if pattern is not None and pattern.fullmatch(value) is None:
-        raise _contract_error(path)
-    return value
-
-
-def _require_rfc3339(value: object, *, path: str) -> str:
-    rendered = _require_string(value, path=path)
-    if _RFC3339_PATTERN.fullmatch(rendered) is None:
-        raise _contract_error(path)
-    has_leap_second = rendered[17:19] == "60"
-    calendar_check = rendered[:17] + "59" + rendered[19:] if has_leap_second else rendered
-    normalized = (
-        calendar_check[:-1] + "+00:00" if calendar_check.endswith(("Z", "z")) else calendar_check
-    )
-    try:
-        parsed = datetime.fromisoformat(normalized)
-        utc = parsed.astimezone(UTC) if has_leap_second else None
-    except (OverflowError, ValueError) as exc:
-        raise _contract_error(path) from exc
-    if parsed.tzinfo is None:
-        raise _contract_error(path)
-    if has_leap_second:
-        if utc is None or (
-            (utc.hour, utc.minute, utc.second) != (23, 59, 59)
-            or utc.day != monthrange(utc.year, utc.month)[1]
-        ):
-            raise _contract_error(path)
-    return rendered
-
-
-def _require_pypi_uri(value: object, *, path: str) -> str:
-    rendered = _require_string(value, path=path)
-    if (
-        _URI_CHARACTER_PATTERN.fullmatch(rendered) is None
-        or _INVALID_PERCENT_ESCAPE_PATTERN.search(rendered) is not None
-    ):
-        raise _contract_error(path)
-    try:
-        parsed = urlsplit(rendered)
-    except ValueError as exc:
-        raise _contract_error(path) from exc
-    if (
-        not rendered.startswith("https://pypi.org/project/")
-        or parsed.scheme != "https"
-        or parsed.netloc != "pypi.org"
-        or _URI_PATH_PATTERN.fullmatch(parsed.path) is None
-        or _URI_QUERY_FRAGMENT_PATTERN.fullmatch(parsed.query) is None
-        or _URI_QUERY_FRAGMENT_PATTERN.fullmatch(parsed.fragment) is None
-    ):
-        raise _contract_error(path)
-    return rendered
 
 
 @dataclass(frozen=True)
@@ -251,59 +160,17 @@ class ReleaseEvent:
             ),
         )
         if root["schema_version"] != "release-event.v1":
-            raise _contract_error("$.schema_version")
-        event_key = _require_string(
-            root["event_key"],
-            path="$.event_key",
-            maximum=512,
-            pattern=_EVENT_KEY_PATTERN,
-        )
-        if root["source"] != "pypi-rss-updates":
-            raise _contract_error("$.source")
+            raise ReleaseEventContractError("unsupported release event schema version")
 
         package = _require_object(
             root["package"],
             path="$.package",
             required=frozenset({"name", "normalized_name"}),
         )
-        package_name = _require_string(
-            package["name"],
-            path="$.package.name",
-            minimum=1,
-            maximum=256,
-        )
-        normalized_name = _require_string(
-            package["normalized_name"],
-            path="$.package.normalized_name",
-            maximum=256,
-            pattern=_NORMALIZED_NAME_PATTERN,
-        )
-
         release = _require_object(
             root["release"],
             path="$.release",
             required=frozenset({"version", "published_at", "url"}),
-        )
-        release_version = _require_string(
-            release["version"],
-            path="$.release.version",
-            minimum=1,
-            maximum=128,
-        )
-        published_at = release["published_at"]
-        if published_at is not None:
-            published_at = _require_rfc3339(
-                published_at,
-                path="$.release.published_at",
-            )
-        release_url = _require_pypi_uri(
-            release["url"],
-            path="$.release.url",
-        )
-
-        ingested_at = _require_rfc3339(
-            root["ingested_at"],
-            path="$.ingested_at",
         )
         observability = _require_object(
             root["observability"],
@@ -317,59 +184,22 @@ class ReleaseEvent:
                     "stage_summary",
                 }
             ),
-            optional=frozenset({"tracestate"}),
         )
-        _require_string(
-            observability["processing_attempt_id"],
-            path="$.observability.processing_attempt_id",
-            minimum=1,
-            maximum=64,
-        )
-        _require_string(
-            observability["analysis_trace_id"],
-            path="$.observability.analysis_trace_id",
-            pattern=_TRACE_ID_PATTERN,
-        )
-        _require_string(
-            observability["analysis_span_id"],
-            path="$.observability.analysis_span_id",
-            pattern=_SPAN_ID_PATTERN,
-        )
-        _require_string(
-            observability["trace_flags"],
-            path="$.observability.trace_flags",
-            pattern=_TRACE_FLAGS_PATTERN,
-        )
-        tracestate = observability.get("tracestate")
-        if tracestate is not None:
-            _require_string(
-                tracestate,
-                path="$.observability.tracestate",
-                maximum=512,
-            )
-        stage_summary = observability["stage_summary"]
-        if (
-            not isinstance(stage_summary, list)
-            or not stage_summary
-            or not all(isinstance(stage, dict) for stage in stage_summary)
-        ):
-            raise _contract_error("$.observability.stage_summary")
-
-        event = cls(
-            event_key=event_key,
-            source="pypi-rss-updates",
-            package=PackageRef(package_name, normalized_name),
-            release=ReleaseRef(
-                release_version,
-                cast(str | None, published_at),
-                release_url,
+        return cls(
+            event_key=root["event_key"],
+            source=root["source"],
+            package=PackageRef(
+                name=package["name"],
+                normalized_name=package["normalized_name"],
             ),
-            ingested_at=ingested_at,
+            release=ReleaseRef(
+                version=release["version"],
+                published_at=release["published_at"],
+                url=release["url"],
+            ),
+            ingested_at=root["ingested_at"],
             observability=dict(observability),
         )
-        if event.event_key != f"pypi:{event.package.normalized_name}:{event.release.version}":
-            raise _contract_error("$.event_key")
-        return event
 
     def to_dict(self) -> Json:
         return asdict(self)
