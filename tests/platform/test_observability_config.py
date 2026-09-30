@@ -588,7 +588,7 @@ class ObservabilityConfigTests(unittest.TestCase):
         self.assertIn("--network none", metrics_text)
         self.assertIn('--network "container:${redpanda_container}"', metrics_text)
         self.assertIn("SOURCE_METRICS_REDPANDA_BROKERS=localhost:9092", metrics_text)
-        metrics_config = (ROOT / "config" / "connect" / "source-metrics-test.yaml").read_text()
+        metrics_config = (ROOT / "tests" / "connect" / "source-metrics-test.yaml").read_text()
         self.assertIn(
             "${SOURCE_METRICS_REDPANDA_BROKERS:redpanda:9092}",
             metrics_config,
