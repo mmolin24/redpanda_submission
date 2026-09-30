@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
+import { MarkdownText } from "../MarkdownText";
 import {
   Badge,
   ErrorState,
@@ -58,7 +59,7 @@ export function Finding() {
     summaryLimitations.length ? summaryLimitations : stringItems(finding.limitations)
   ).filter((item) => !isLegacyCustomerContext(item));
   const evidence = finding.evidence_bundle;
-  const computedEvidence = evidence.computed;
+  const computedEvidence = presentEvidence(evidence.computed);
   const factCount = arrayLength(evidence.facts);
   const sourceCount = arrayLength(evidence.provenance);
   const collectionStatus =
@@ -174,7 +175,9 @@ export function Finding() {
           <div className="summary-heading">
             <div>
               <p className="eyebrow">Consumer impact</p>
-              <h2 id="finding-summary-title">{impactHeadline}</h2>
+              <h2 id="finding-summary-title">
+                <MarkdownText inline>{impactHeadline}</MarkdownText>
+              </h2>
             </div>
             <CheckCircle2 aria-hidden="true" />
           </div>
@@ -186,16 +189,16 @@ export function Finding() {
             <div className="decision-details">
               <section>
                 <h3>What happens</h3>
-                <p>{impactSummary}</p>
+                <MarkdownText>{impactSummary}</MarkdownText>
               </section>
               <section>
                 <h3>Verify with</h3>
-                <p>{verification}</p>
+                <MarkdownText>{verification}</MarkdownText>
               </section>
               {notAffectedIf && (
                 <section>
                   <h3>Not affected when</h3>
-                  <p>{notAffectedIf}</p>
+                  <MarkdownText>{notAffectedIf}</MarkdownText>
                 </section>
               )}
               {deterministicImpacts.length > 1 && (
@@ -255,7 +258,7 @@ export function Finding() {
                 : `${finding.package_name} ${finding.candidate_version}`}
             </p>
             <EvidenceHighlights evidence={evidence} claims={claims} summary={customerSummary} />
-            {presentEvidence(computedEvidence) !== undefined && (
+            {computedEvidence !== undefined && (
               <Disclosure label="View computed differences">
                 <JsonFacts value={computedEvidence} />
               </Disclosure>
@@ -278,7 +281,7 @@ export function Finding() {
                   </p>
                 )}
                 {presentEvidence(evidence.provenance) !== undefined && (
-                  <JsonFacts value={evidence.provenance} />
+                  <JsonFacts value={presentEvidence(evidence.provenance)} />
                 )}
               </Disclosure>
             )}
@@ -288,7 +291,7 @@ export function Finding() {
               </Disclosure>
             )}
             <Disclosure label="View source event and model metadata">
-              <JsonFacts value={auditMetadata(finding)} />
+              <JsonFacts value={presentEvidence(auditMetadata(finding))} />
             </Disclosure>
           </DetailSection>
 
@@ -334,7 +337,7 @@ function SummaryItem({ label, value }: { label: string; value: string }) {
   return (
     <article>
       <span>{label}</span>
-      <p>{value}</p>
+      <MarkdownText>{value}</MarkdownText>
     </article>
   );
 }
@@ -352,14 +355,18 @@ function ClaimList({ claims }: { claims: UnknownRecord[] }) {
               <h3>Claim {index + 1}</h3>
               {support && <Badge>{humanize(support)}</Badge>}
             </div>
-            <p>{textValue(claim.statement) ?? "No claim statement was recorded."}</p>
+            <MarkdownText>
+              {textValue(claim.statement) ?? "No claim statement was recorded."}
+            </MarkdownText>
             {(conditions.length > 0 || support?.toLowerCase() === "conditional") && (
               <div className="claim-conditions">
                 <span>Applies when</span>
                 {conditions.length ? (
                   <ul>
                     {conditions.map((condition, conditionIndex) => (
-                      <li key={`${condition}-${conditionIndex}`}>{condition}</li>
+                      <li key={`${condition}-${conditionIndex}`}>
+                        <MarkdownText>{condition}</MarkdownText>
+                      </li>
                     ))}
                   </ul>
                 ) : (
@@ -382,7 +389,9 @@ function TextList({ items, empty }: { items: string[]; empty: string }) {
   return (
     <ul className="readable-list">
       {items.map((item, index) => (
-        <li key={`${item}-${index}`}>{item}</li>
+        <li key={`${item}-${index}`}>
+          <MarkdownText>{item}</MarkdownText>
+        </li>
       ))}
     </ul>
   );
@@ -466,7 +475,9 @@ function EvidenceHighlights({
   ];
   return (
     <div className="evidence-summary">
-      {comparisons.map(({ key, label, before: baseline, after: candidate }) => {
+      {comparisons.map(({ key, label, before, after }) => {
+        const baseline = presentEvidence(before);
+        const candidate = presentEvidence(after);
         if (baseline === undefined && candidate === undefined) return null;
         const display = (value: unknown) =>
           typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -642,7 +653,7 @@ function TraceCard({ trace }: { trace: AsyncState<TraceSummary> }) {
                     <span className="timeline-dot" aria-hidden="true" />
                     <div>
                       <strong>{humanize(stage.stage)}</strong>
-                      <p>{stage.detail ?? stage.outcome}</p>
+                      <MarkdownText>{stage.detail ?? stage.outcome}</MarkdownText>
                       <small>
                         {stage.duration_ms == null
                           ? formatDate(stage.completed_at)

@@ -257,60 +257,6 @@ p {
   color: var(--text);
   font-size: 13px;
 }
-.data-attention {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  margin-bottom: 16px;
-  padding: 11px 13px;
-  border: 1px solid #92400e;
-  border-radius: 8px;
-  color: #fde68a;
-  background: rgba(120, 53, 15, 0.24);
-}
-.data-attention svg {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-}
-.data-attention div {
-  display: grid;
-  gap: 2px;
-}
-.data-attention strong {
-  font-size: 13px;
-}
-.data-attention span {
-  color: #fcd34d;
-  font-size: 12px;
-}
-.release-observation {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  margin-bottom: 18px;
-  padding: 11px 13px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: #bfdbfe;
-  background: rgba(30, 64, 175, 0.14);
-}
-.release-observation svg {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-}
-.release-observation div {
-  display: grid;
-  gap: 2px;
-}
-.release-observation strong {
-  font-size: 13px;
-}
-.release-observation span {
-  color: #93c5fd;
-  font-size: 12px;
-}
 .glance-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -370,6 +316,46 @@ p {
 }
 .insufficient-section {
   margin: 18px 0;
+}
+.insufficient-disclosure {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.insufficient-disclosure summary {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  cursor: pointer;
+  list-style: none;
+}
+.insufficient-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+.insufficient-disclosure summary h2 {
+  font-size: 16px;
+}
+.insufficient-disclosure summary > span {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+.insufficient-disclosure summary > svg {
+  width: 16px;
+}
+.insufficient-disclosure[open] .disclosure-chevron {
+  transform: rotate(180deg);
+}
+.insufficient-content {
+  padding: 0 18px 18px;
+}
+.insufficient-content > p {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 13px;
 }
 .insufficient-list {
   display: grid;
@@ -709,6 +695,11 @@ p {
   color: var(--muted);
   font-size: 12px;
 }
+.scan-change .scan-assessment {
+  color: #cbd5e1;
+  font-size: 13px;
+  line-height: 1.5;
+}
 .scan-stat strong,
 .scan-stat span,
 .scan-date time,
@@ -771,6 +762,18 @@ select {
 input:hover,
 select:hover {
   border-color: #64748b;
+}
+.confidence-field .field-hint {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.confidence-field .field-error {
+  color: #fca5a5;
+}
+.confidence-field input[aria-invalid="true"] {
+  border-color: var(--danger);
 }
 .text-button {
   color: #94a3b8;
@@ -1548,6 +1551,11 @@ td small {
   .plain-change {
     min-height: 0;
   }
+  .scan-row {
+    grid-template-columns: 100px minmax(220px, 1.4fr) 120px minmax(170px, 0.8fr) 36px;
+  }
+}
+@media (max-width: 900px) {
   .filter-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -1819,4 +1827,62 @@ td small {
 .evidence-diff-expanded {
   max-height: 360px;
   overflow: auto;
+}
+
+.markdown-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+.markdown-body code,
+.markdown-inline code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: #d1fae5;
+  background: #0b1322;
+  padding: 2px 4px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+.markdown-body pre {
+  padding: 12px;
+  background: #0b1322;
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 360px;
+}
+.markdown-body pre code {
+  padding: 0;
+  white-space: pre;
+}
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 22px;
+}
+.markdown-body a,
+.markdown-inline a {
+  color: var(--green);
+  text-decoration: underline;
+}
+.markdown-body table {
+  display: block;
+  max-width: 100%;
+  overflow: auto;
+  border-collapse: collapse;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid #334155;
+  padding: 8px;
+}
+.markdown-body blockquote {
+  margin-left: 0;
+  border-left: 3px solid #334155;
+  padding-left: 12px;
+  color: var(--muted);
 }

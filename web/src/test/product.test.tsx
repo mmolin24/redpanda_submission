@@ -60,15 +60,16 @@ describe("findings dashboard", () => {
     expect(screen.getByText("Most recent event")).toBeInTheDocument();
     expect(screen.getAllByText("86%").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Dependency rules changed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(finding.assessment!)).toHaveLength(2);
     expect(screen.getByText("Dashboard data healthy")).toHaveAttribute("role", "status");
     expect(screen.getByText("Fixture data")).toBeInTheDocument();
     expect(screen.getByText("Static fixture data is available.")).toBeInTheDocument();
-    expect(screen.getByText("4 processing records need review")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Processing records to review")).not.toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "4 failed processing records are safely retained for review; this count does not indicate infrastructure backpressure.",
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Quick scan" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -92,6 +93,61 @@ describe("findings dashboard", () => {
       expect.anything(),
     );
     expect(screen.getByRole("option", { name: "Medium" })).toHaveValue("medium");
+  });
+
+  it("validates confidence percentages before requesting findings", async () => {
+    const fetch = mockFetch({
+      "/api/findings?": findingPage,
+      "/api/stats": stats,
+      "/api/ops/summary": { status: "healthy", freshness: {} },
+    });
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+    await screen.findAllByRole("link", { name: "requests" });
+    fireEvent.click(screen.getByText("Filters"));
+    const input = screen.getByRole("spinbutton", { name: "Minimum confidence (%)" });
+    fireEvent.change(input, { target: { value: "65" } });
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining("min_confidence=0.65"),
+        expect.anything(),
+      ),
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh data" })).toBeEnabled());
+    fetch.mockClear();
+    for (const value of ["101", "-1"]) {
+      fireEvent.change(input, { target: { value } });
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByRole("alert")).toHaveTextContent("Enter a percentage from 0 to 100.");
+      expect(screen.getAllByRole("link", { name: "requests" })).toHaveLength(2);
+      expect(fetch).not.toHaveBeenCalled();
+    }
+    for (const [value, normalized] of [
+      ["100", "1"],
+      ["0", "0"],
+    ]) {
+      fireEvent.change(input, { target: { value } });
+      await waitFor(() =>
+        expect(fetch).toHaveBeenCalledWith(
+          expect.stringContaining(`min_confidence=${normalized}`),
+          expect.anything(),
+        ),
+      );
+      expect(input).not.toHaveAttribute("aria-invalid");
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Refresh data" })).toBeEnabled(),
+      );
+      fetch.mockClear();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(input).toHaveValue(null);
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(fetch.mock.calls.map(([input]) => requestUrl(input)).join(" ")).not.toContain(
+      "min_confidence",
+    );
   });
 
   it("retries an explicit API error in place", async () => {
@@ -416,12 +472,12 @@ describe("findings dashboard", () => {
       timeStyle: "short",
     }).format(new Date("2026-04-24T20:15:23Z"));
     expect(screen.getByText(`26.2 · ${releaseDate}`)).toBeInTheDocument();
-    expect(screen.getByText("packaging 26.2 was monitored")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Latest monitored release status")).not.toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Suppressed validation failure. No customer-facing finding was published because the analysis did not pass the publication boundary.",
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
   });
 
   it("publishes insufficient evidence as a labeled analysis without counting it as impact", async () => {
@@ -459,17 +515,26 @@ describe("findings dashboard", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole("heading", { name: "Needs evidence" })).toBeInTheDocument();
+    const evidenceHeading = await screen.findByRole("heading", { name: "Needs evidence" });
+    const disclosure = evidenceHeading.closest("details");
+    expect(disclosure).not.toHaveAttribute("open");
+    expect(
+      screen
+        .getByRole("heading", { name: "Release changes" })
+        .compareDocumentPosition(evidenceHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.click(disclosure!.querySelector("summary")!);
+    expect(disclosure).toHaveAttribute("open");
     expect(screen.getByRole("link", { name: "cffi 2.1.0" })).toBeInTheDocument();
     expect(screen.getAllByText("Insufficient evidence").length).toBeGreaterThan(0);
     expect(
       screen.getByText("1 distinct releases, expressed in plain language."),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Published as an evidence-limited analysis; no customer-impact conclusion was produced.",
       ),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Full table" }));
     expect(screen.getByRole("link", { name: "cffi" })).toBeInTheDocument();
