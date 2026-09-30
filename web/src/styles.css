@@ -813,6 +813,34 @@ input:hover,
 select:hover {
   border-color: #64748b;
 }
+.select-control {
+  position: relative;
+  display: block;
+  margin-top: 5px;
+}
+.select-control select {
+  appearance: none;
+  margin-top: 0;
+  padding-inline-end: 40px;
+}
+.select-control > svg {
+  position: absolute;
+  inset-inline-end: 12px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+@media (forced-colors: active) {
+  .select-control select {
+    appearance: auto;
+    padding-inline-end: 10px;
+  }
+  .select-control > svg {
+    display: none;
+  }
+}
 .confidence-field .field-hint {
   margin: 5px 0 0;
   color: var(--muted);

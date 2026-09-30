@@ -283,17 +283,20 @@ export function Dashboard() {
           </label>
           <label>
             Change type
-            <select
-              value={filters.change_type ?? ""}
-              onChange={(event) => setFilters({ ...filters, change_type: event.target.value })}
-            >
-              <option value="">All change types</option>
-              {changeTypeOptions.map((type) => (
-                <option key={type} value={type}>
-                  {formatChangeType(type)}
-                </option>
-              ))}
-            </select>
+            <span className="select-control">
+              <select
+                value={filters.change_type ?? ""}
+                onChange={(event) => setFilters({ ...filters, change_type: event.target.value })}
+              >
+                <option value="">All change types</option>
+                {changeTypeOptions.map((type) => (
+                  <option key={type} value={type}>
+                    {formatChangeType(type)}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown aria-hidden="true" />
+            </span>
           </label>
           <div className="filter-reset">
             {(visibleItemCount > 0 || findings.status === "error" || !findings.data) &&
@@ -317,17 +320,20 @@ export function Dashboard() {
             <div className="filter-grid">
               <label>
                 Priority
-                <select
-                  value={filters.processing_priority ?? ""}
-                  onChange={(event) =>
-                    setFilters({ ...filters, processing_priority: event.target.value })
-                  }
-                >
-                  <option value="">All priorities</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
+                <span className="select-control">
+                  <select
+                    value={filters.processing_priority ?? ""}
+                    onChange={(event) =>
+                      setFilters({ ...filters, processing_priority: event.target.value })
+                    }
+                  >
+                    <option value="">All priorities</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                  <ChevronDown aria-hidden="true" />
+                </span>
               </label>
               <div className="confidence-field">
                 <label htmlFor="minimum-confidence">Minimum confidence (%)</label>
