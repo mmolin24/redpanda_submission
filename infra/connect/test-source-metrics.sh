@@ -60,10 +60,11 @@ docker run --detach --name "${container}" \
   --network "container:${redpanda_container}" \
   -e SOURCE_METRICS_REDPANDA_BROKERS=localhost:9092 \
   -v "${root_dir}/config/connect:/config:ro" \
+  -v "${root_dir}/tests/connect:/tests:ro" \
   -v "${root_dir}/schemas:/schemas:ro" \
   -v "${root_dir}/data:/data:ro" \
   -v "${test_dir}:/metrics-data:ro" \
-  "${image}" run -r /config/source-resources.yaml /config/source-metrics-test.yaml >/dev/null
+  "${image}" run -r /config/source-resources.yaml /tests/source-metrics-test.yaml >/dev/null
 
 metric_sum() {
   metric_name="$1"

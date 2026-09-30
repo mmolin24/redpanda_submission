@@ -112,7 +112,7 @@ class FailurePersistenceTests(unittest.TestCase):
         self,
     ) -> None:
         runner = (ROOT / "infra" / "connect" / "lint-configs.sh").read_text()
-        native_test = ROOT / "config" / "connect" / "sink_benthos_test.yaml"
+        native_test = ROOT / "tests" / "connect" / "sink_benthos_test.yaml"
 
         self.assertTrue(native_test.exists())
         self.assertIn("sink_benthos_test.yaml", runner)

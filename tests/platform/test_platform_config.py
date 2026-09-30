@@ -555,7 +555,7 @@ class PlatformConfigTests(unittest.TestCase):
             self.assertIn("error_handling:\n  strict: true", source)
             self.assertIn("- resource: source_ingestion_pipeline", source)
 
-        connect_tests = ROOT / "config" / "connect" / "source-fixture_benthos_test.yaml"
+        connect_tests = ROOT / "tests" / "connect" / "source-fixture_benthos_test.yaml"
         self.assertTrue(connect_tests.exists())
         runner = (ROOT / "infra" / "connect" / "lint-configs.sh").read_text()
         self.assertIn("source-fixture_benthos_test.yaml", runner)
@@ -613,7 +613,7 @@ class PlatformConfigTests(unittest.TestCase):
         self.assertIn('meta("relevance_decision") == "irrelevant"', resource_text)
         self.assertNotIn("retry:", resource_text)
 
-        native_tests = (ROOT / "config" / "connect" / "sink_benthos_test.yaml").read_text()
+        native_tests = (ROOT / "tests" / "connect" / "sink_benthos_test.yaml").read_text()
         self.assertIn("invalid fingerprinted ingestion envelope remains errored", native_tests)
         self.assertIn("errored()", native_tests)
 
