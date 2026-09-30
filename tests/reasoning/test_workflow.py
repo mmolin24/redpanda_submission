@@ -51,13 +51,14 @@ from reasoning_worker.workflow import (
 )
 
 
-def pipeline(release_event, outcomes):
+def pipeline(release_event, outcomes, *, confidence_threshold: float = 0.65):
     provider = FakeModelProvider(outcomes)
     return (
         ReasoningPipeline(
             enricher=StaticEnricher(evidence(release_event)),
             materiality=MaterialityEngine(provider),
             applicability=ApplicabilityEngine(provider),
+            confidence_threshold=confidence_threshold,
         ),
         provider,
     )
@@ -731,6 +732,86 @@ def test_applicability_suppresses_after_one_failed_structured_correction():
         "materiality_assessment",
         "applicability_assessment",
         "applicability_correction",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("materiality_confidence", "applicability_confidence", "publication_threshold"),
+    [(0.9, 0.64, 0.65), (0.7, 0.9, 0.8)],
+    ids=["low-applicability", "stricter-publication-threshold"],
+)
+def test_customer_summary_is_skipped_below_publication_confidence(
+    materiality_confidence: float,
+    applicability_confidence: float,
+    publication_threshold: float,
+):
+    release_event = event()
+    worker, provider = pipeline(
+        release_event,
+        [
+            FakeOutcome(parsed=substantive(materiality_confidence)),
+            FakeOutcome(parsed=applicability(confidence=applicability_confidence)),
+        ],
+        confidence_threshold=publication_threshold,
+    )
+
+    terminal = worker.process(release_event)
+
+    assert isinstance(terminal, Finding)
+    assert terminal.disposition == Disposition.LOW_CONFIDENCE
+    assert terminal.publishable is False
+    assert terminal.gate_results["customer_impact"]["errors"] == [
+        "publication confidence below threshold"
+    ]
+    assert [request.purpose for request in provider.requests] == [
+        "materiality_assessment",
+        "applicability_assessment",
+    ]
+
+
+def test_customer_summary_is_skipped_without_applicability_limitations():
+    release_event = event()
+    result = applicability()
+    result["limitations"] = []
+    worker, provider = pipeline(
+        release_event,
+        [FakeOutcome(parsed=substantive()), FakeOutcome(parsed=result)],
+    )
+
+    terminal = worker.process(release_event)
+
+    assert isinstance(terminal, Finding)
+    assert terminal.disposition == Disposition.VALIDATION_FAILURE
+    assert terminal.publishable is False
+    assert terminal.gate_results["customer_impact"]["errors"] == [
+        "finding requires explicit limitations"
+    ]
+    assert [request.purpose for request in provider.requests] == [
+        "materiality_assessment",
+        "applicability_assessment",
+    ]
+
+
+def test_customer_summary_is_generated_at_the_publication_confidence_threshold():
+    release_event = event()
+    worker, provider = pipeline(
+        release_event,
+        [
+            FakeOutcome(parsed=substantive(0.65)),
+            FakeOutcome(parsed=applicability(confidence=0.65)),
+            FakeOutcome(parsed=customer_impact()),
+        ],
+    )
+
+    terminal = worker.process(release_event)
+
+    assert isinstance(terminal, Finding)
+    assert terminal.disposition == Disposition.PUBLISHABLE
+    assert terminal.publishable is True
+    assert [request.purpose for request in provider.requests] == [
+        "materiality_assessment",
+        "applicability_assessment",
+        "customer_impact_summary",
     ]
 
 

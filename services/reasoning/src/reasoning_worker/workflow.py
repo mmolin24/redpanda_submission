@@ -275,9 +275,7 @@ class ReasoningPipeline:
                 materiality=materiality.result,
                 applicability=applicability.result,
                 applicability_validation=applicability.validation,
-                evidence=evidence,
                 confidence_threshold=self.confidence_threshold,
-                versions=versions,
             )
             # Customer-facing generation requires validated materiality and applicability inputs.
             if customer_impact_inputs.valid:
