@@ -180,12 +180,13 @@ class ComposeDemoTests(unittest.TestCase):
         self.assertNotEqual(blocked.returncode, 0)
         self.assertIn("two consecutive zero-lag", blocked.stderr)
 
-    def test_readme_primary_demo_command_is_direct_compose(self) -> None:
+    def test_readme_primary_demo_command_uses_grafana_discovery_launcher(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        command = "docker compose up --build --force-recreate"
+        command = "make up"
         self.assertIn(command, readme)
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertNotIn("demo:", makefile)
+        self.assertIn("python3 -m scripts.start_stack", makefile)
         self.assertTrue(DEMO_COMPOSE.is_file())
 
     def test_readme_drain_command_stops_ingress_before_the_one_shot_gate(self) -> None:
@@ -205,7 +206,7 @@ class ComposeDemoTests(unittest.TestCase):
         }
         self.assertEqual(
             targets,
-            {"help", "format", "check", "smoke", "up-fixture", "stop-safe"},
+            {"help", "format", "check", "smoke", "up", "up-fixture", "stop-safe"},
         )
         self.assertIn("sh scripts/check.sh", makefile)
 

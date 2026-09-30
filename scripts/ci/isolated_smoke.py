@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..grafana import published_grafana_url
 from .docker_project import DockerProject, DockerProjectError
 from .process import (
     ProcessFailure,
@@ -419,10 +420,10 @@ def _configure_grafana_public_url(
         30,
         "smoke_grafana_port_unavailable",
     ).strip()
-    match = re.fullmatch(r"(?:127\.0\.0\.1|localhost|\[::1\]):([0-9]{1,5})", published)
-    if match is None or not 1 <= int(match.group(1)) <= 65_535:
-        raise IsolatedSmokeError("smoke_grafana_port_invalid")
-    settings.environment["GRAFANA_BASE_URL"] = f"http://127.0.0.1:{match.group(1)}"
+    try:
+        settings.environment["GRAFANA_BASE_URL"] = published_grafana_url(published)
+    except ValueError:
+        raise IsolatedSmokeError("smoke_grafana_port_invalid") from None
     runner(
         (
             *settings.compose,

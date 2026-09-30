@@ -20,7 +20,7 @@ sh infra/doctor.sh launch
 ## Run the assessment demo
 
 ```sh
-docker compose up --build --force-recreate
+make up
 ```
 
 Compose processes the banked RSS fixtures through the retained stack, verifies fresh
@@ -33,13 +33,13 @@ To enable the paid model-assisted path, copy the example environment and set the
 ```sh
 cp .env.example .env
 # In .env: OPENAI_API_KEY=<your key>
-docker compose up --build --force-recreate
+make up
 ```
 
 Shell values override `.env`, so the equivalent paid one-command launch is:
 
 ```sh
-OPENAI_API_KEY=... docker compose up --build --force-recreate
+OPENAI_API_KEY=... make up
 ```
 
 A configured key automatically enables the paid live path. The banked fixture phase
@@ -52,6 +52,20 @@ the key locally.
 | API documentation | <http://localhost:8000/docs> |
 | Grafana           | <http://localhost:3001>      |
 | Redpanda Console  | <http://localhost:8080>      |
+
+`make up` starts the stack detached, reads `docker compose port grafana 3000`,
+and recreates only the API with that browser URL. This overrides stale
+`GRAFANA_BASE_URL` values and supports Docker-assigned ports. Use `docker compose logs -f`
+to follow output. Direct `docker compose up` uses the configured URL without discovery.
+
+For a custom project or Compose files, pass the same global options to the launcher:
+
+```sh
+python3 -m scripts.start_stack -- -p my-demo -f docker-compose.yml -f docker-compose.override.yml
+```
+
+To repair links in an already running stack, add `--sync-only` before `--`.
+This recreates only the API and leaves Grafana and the pipeline running.
 
 ## Drain safely
 
