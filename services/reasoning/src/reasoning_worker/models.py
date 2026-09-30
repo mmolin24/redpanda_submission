@@ -81,6 +81,8 @@ class ReasoningEffort(StrEnum):
 
     LOW = "low"
     MEDIUM = "medium"
+    HIGH = "high"
+    MAX = "max"
 
 
 CHANGE_TYPES = {
@@ -528,7 +530,7 @@ class ModelCallRecord:
     outcome: str
     estimated_cost_usd: float
     span_id: str | None = None
-    price_table_version: str = "openai-2026-07-22-cache-aware"
+    price_table_version: str = "openai-2026-09-30-sol61-cache-aware"
 
 
 @dataclass(frozen=True)

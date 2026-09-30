@@ -167,9 +167,18 @@ class MaterialityOutcome:
 class MaterialityEngine:
     """Assess materiality with one bounded correction and confidence review."""
 
-    def __init__(self, provider: ModelProvider, confidence_threshold: float = 0.65) -> None:
+    def __init__(
+        self,
+        provider: ModelProvider,
+        confidence_threshold: float = 0.65,
+        *,
+        max_output_tokens: int = 6000,
+        review_service_tier: ServiceTier = ServiceTier.DEFAULT,
+    ) -> None:
         self.provider = provider
         self.confidence_threshold = confidence_threshold
+        self.max_output_tokens = max_output_tokens
+        self.review_service_tier = review_service_tier
 
     def evaluate(self, evidence: EvidenceBundle, routing: RoutingEnvelope) -> MaterialityOutcome:
         if routing.model is None or routing.service_tier is None:
@@ -230,8 +239,9 @@ class MaterialityEngine:
                     output_schema=MATERIALITY_SCHEMA,
                     output_schema_name="materiality_assessment",
                     model=routing.model,
-                    service_tier=ServiceTier.DEFAULT,
-                    reasoning_effort=ReasoningEffort.MEDIUM,
+                    service_tier=self.review_service_tier,
+                    reasoning_effort=routing.reasoning_effort or ReasoningEffort.MAX,
+                    max_output_tokens=self.max_output_tokens,
                 )
             )
             calls.append(reviewed.call)
@@ -302,10 +312,10 @@ class MaterialityEngine:
                 model_input=model_input,
                 output_schema=MATERIALITY_SCHEMA,
                 output_schema_name="materiality_assessment",
-                model=routing.model or "gpt-5.6-sol",
+                model=routing.model or "gpt-6-luna",
                 service_tier=routing.service_tier or ServiceTier.DEFAULT,
-                reasoning_effort=routing.reasoning_effort or ReasoningEffort.LOW,
-                max_output_tokens=1200,
+                reasoning_effort=routing.reasoning_effort or ReasoningEffort.MAX,
+                max_output_tokens=self.max_output_tokens,
             )
         )
 
@@ -341,8 +351,9 @@ class ApplicabilityOutcome:
 class ApplicabilityEngine:
     """Translate accepted materiality into concrete consumer conditions."""
 
-    def __init__(self, provider: ModelProvider) -> None:
+    def __init__(self, provider: ModelProvider, *, max_output_tokens: int = 10000) -> None:
         self.provider = provider
+        self.max_output_tokens = max_output_tokens
 
     def evaluate(
         self,
@@ -425,12 +436,11 @@ class ApplicabilityEngine:
                 model_input=model_input,
                 output_schema=applicability_schema_with_evidence_ids(accepted_evidence_ids),
                 output_schema_name="applicability_assessment",
-                model=routing.model or "gpt-5.6-sol",
+                model=routing.model or "gpt-6-luna",
                 service_tier=routing.service_tier or ServiceTier.DEFAULT,
-                reasoning_effort=ReasoningEffort.LOW,
-                # This budget includes hidden reasoning tokens. Keep enough room for the
-                # bounded structured result so a valid low-effort response is not truncated.
-                max_output_tokens=2400,
+                reasoning_effort=routing.reasoning_effort or ReasoningEffort.MAX,
+                # Hidden reasoning tokens share this budget with the structured result.
+                max_output_tokens=self.max_output_tokens,
             )
         )
         calls.append(response.call)
@@ -464,8 +474,20 @@ class CustomerImpactOutcome:
 class CustomerImpactEngine:
     """Summarize accepted evidence and applicability into decision copy."""
 
-    def __init__(self, provider: ModelProvider) -> None:
+    def __init__(
+        self,
+        provider: ModelProvider,
+        *,
+        max_output_tokens: int = 10000,
+        service_tier: ServiceTier = ServiceTier.DEFAULT,
+        model: str = "gpt-6-luna",
+        reasoning_effort: ReasoningEffort = ReasoningEffort.MAX,
+    ) -> None:
         self.provider = provider
+        self.max_output_tokens = max_output_tokens
+        self.service_tier = service_tier
+        self.model = model
+        self.reasoning_effort = reasoning_effort
 
     def evaluate(
         self,
@@ -579,11 +601,11 @@ class CustomerImpactEngine:
                 model_input=model_input,
                 output_schema=CUSTOMER_IMPACT_SCHEMA,
                 output_schema_name="customer_impact_summary",
-                model="gpt-5.6-terra",
-                service_tier=ServiceTier.DEFAULT,
-                reasoning_effort=ReasoningEffort.LOW,
+                model=self.model,
+                service_tier=self.service_tier,
+                reasoning_effort=self.reasoning_effort,
                 # The Responses API counts reasoning tokens against this budget as well.
-                max_output_tokens=2400,
+                max_output_tokens=self.max_output_tokens,
             )
         )
         calls.append(response.call)

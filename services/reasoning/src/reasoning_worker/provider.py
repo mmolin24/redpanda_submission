@@ -32,6 +32,24 @@ from .models import (
 from .sanitization import sanitize
 from .telemetry import WorkerTelemetry
 
+_MODEL_PRICES_USD_PER_MILLION = {
+    ("gpt-6-luna", "default"): (0.1, 0.01, 0.125, 0.5),
+    ("gpt-6-luna", "flex"): (0.05, 0.005, 0.0625, 0.25),
+    ("gpt-6.1-sol", "default"): (2.0, 0.1, 2.5, 10.0),
+    ("gpt-6.1-sol", "flex"): (1.0, 0.05, 1.25, 5.0),
+    ("gpt-5.6-sol", "default"): (5.0, 0.5, 6.25, 30.0),
+    ("gpt-5.6-sol", "flex"): (2.5, 0.25, 3.125, 15.0),
+    ("gpt-5.6-terra", "default"): (2.5, 0.25, 3.125, 15.0),
+    ("gpt-5.6-terra", "flex"): (1.25, 0.125, 1.5625, 7.5),
+}
+
+
+def validate_model_pricing(model: str) -> None:
+    """Reject unpriced configured models before any provider request can execute."""
+    if (model, ServiceTier.DEFAULT.value) not in _MODEL_PRICES_USD_PER_MILLION:
+        raise ValueError(f"no price table entry for model {model!r}")
+
+
 MATERIALITY_SCHEMA: Json = {
     "type": "object",
     "additionalProperties": False,
@@ -218,10 +236,10 @@ class ModelRequest:
     output_schema_name: str
     instruction_suffix: str | None = None
     cache_namespace: str | None = None
-    model: str = "gpt-5.6-sol"
+    model: str = "gpt-6-luna"
     service_tier: ServiceTier = ServiceTier.DEFAULT
-    reasoning_effort: ReasoningEffort = ReasoningEffort.LOW
-    max_output_tokens: int = 1200
+    reasoning_effort: ReasoningEffort = ReasoningEffort.MAX
+    max_output_tokens: int = 6000
     max_input_bytes: int = REASONING_MODEL_INPUT_MAX_BYTES
 
     def compiled_input(self) -> CompiledModelInput:
@@ -505,6 +523,15 @@ class OpenAIResponsesProvider(_CapturePolicyBound):
                         span_id=span_id,
                     )
                     if status != "completed":
+                        model_span.set_result(call)
+                        details = _public_dump(getattr(response, "incomplete_details", None))
+                        reason = details.get("reason") if isinstance(details, dict) else None
+                        model_span.set_attribute(
+                            "pypi.gen_ai.incomplete_reason",
+                            reason
+                            if reason in {"max_output_tokens", "content_filter"}
+                            else "unknown",
+                        )
                         model_span.set_error("incomplete")
                         self.telemetry.record_model_call(call, time.monotonic() - call_started)
                         raise ProviderIncomplete(f"response status was {status}", call)
@@ -920,16 +947,19 @@ def _prompt_cache_key(request: ModelRequest) -> str:
 def _estimate_cost(usage: TokenUsage, *, model: str, service_tier: str) -> float:
     # USD per million tokens from the versioned price table. Reasoning tokens are
     # already included in output_tokens and cache reads/writes are disjoint input classes.
-    prices = {
-        ("gpt-5.6-sol", "default"): (5.0, 0.5, 6.25, 30.0),
-        ("gpt-5.6-sol", "flex"): (2.5, 0.25, 3.125, 15.0),
-        ("gpt-5.6-terra", "default"): (2.5, 0.25, 3.125, 15.0),
-        ("gpt-5.6-terra", "flex"): (1.25, 0.125, 1.5625, 7.5),
-    }
-    input_rate, cached_rate, write_rate, output_rate = prices.get(
-        (model, service_tier),
-        prices[("gpt-5.6-sol", "default")],
-    )
+    try:
+        input_rate, cached_rate, write_rate, output_rate = _MODEL_PRICES_USD_PER_MILLION[
+            (model, service_tier)
+        ]
+    except KeyError as exc:
+        raise ValueError(
+            f"no price table entry for model {model!r} on tier {service_tier!r}"
+        ) from exc
+    if model == "gpt-6.1-sol" and usage.input_tokens > 272000:
+        input_rate *= 2
+        cached_rate *= 2
+        write_rate *= 2
+        output_rate *= 1.5
     uncached = max(
         usage.input_tokens - usage.cached_input_tokens - usage.cache_write_tokens,
         0,

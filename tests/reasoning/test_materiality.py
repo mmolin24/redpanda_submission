@@ -67,7 +67,7 @@ def test_second_invalid_result_dead_letters_instead_of_looping():
     assert len(provider.requests) == 2
 
 
-def test_low_confidence_substantive_result_reviews_once_on_standard_medium():
+def test_low_confidence_substantive_result_reviews_once_on_standard_max():
     bundle = evidence()
     provider = FakeModelProvider(
         [FakeOutcome(parsed=substantive(0.4)), FakeOutcome(parsed=substantive(0.55))]
@@ -82,7 +82,7 @@ def test_low_confidence_substantive_result_reviews_once_on_standard_medium():
     assert provider.requests[1].instructions == provider.requests[0].instructions
     assert provider.requests[1].instruction_suffix is not None
     assert provider.requests[1].service_tier.value == "default"
-    assert provider.requests[1].reasoning_effort.value == "medium"
+    assert provider.requests[1].reasoning_effort.value == "max"
 
 
 def test_refusal_is_explicit_terminal_disposition():

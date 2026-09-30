@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import re
 import signal
 import threading
 import time
@@ -21,12 +22,13 @@ from .evidence import (
     PyPIEnricher,
 )
 from .ids import sha256_json
-from .models import ReleaseEvent
+from .models import ReasoningEffort, ReleaseEvent, ServiceTier
 from .monitoring import MonitoredPackages, load_monitored_packages
 from .provider import (
     DeterministicFakeProvider,
     ModelPayloadCapturePolicy,
     OpenAIResponsesProvider,
+    validate_model_pricing,
 )
 from .reasoning import (
     ApplicabilityEngine,
@@ -290,14 +292,49 @@ def build_pipeline(
         )
     else:
         raise ValueError("MODEL_MODE must resolve to fake or openai")
+    service_tier = _configured_service_tier()
+    model = _configured_model()
+    reasoning_effort = _configured_reasoning_effort()
     return ReasoningPipeline(
         enricher=enricher,
-        materiality=MaterialityEngine(provider),
-        applicability=ApplicabilityEngine(provider),
-        customer_impact=CustomerImpactEngine(provider),
+        materiality=MaterialityEngine(
+            provider,
+            max_output_tokens=_output_token_budget("MATERIALITY_MAX_OUTPUT_TOKENS"),
+            review_service_tier=service_tier or ServiceTier.DEFAULT,
+        ),
+        applicability=ApplicabilityEngine(
+            provider, max_output_tokens=_output_token_budget("APPLICABILITY_MAX_OUTPUT_TOKENS")
+        ),
+        customer_impact=CustomerImpactEngine(
+            provider,
+            max_output_tokens=_output_token_budget("CUSTOMER_IMPACT_MAX_OUTPUT_TOKENS"),
+            service_tier=service_tier or ServiceTier.DEFAULT,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        ),
+        service_tier_override=service_tier,
+        model=model,
+        reasoning_effort=reasoning_effort,
         monitored_packages=monitored_packages,
         analysis_policy_revision=os.getenv("ANALYSIS_POLICY_REVISION", "analysis-policy-v1"),
     )
+
+
+def _configured_model() -> str:
+    """Select a model without changing the default analysis configuration."""
+    model = os.getenv("OPENAI_MODEL", "gpt-6-luna")
+    if re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,127}", model) is None:
+        raise ValueError("OPENAI_MODEL must be a bounded model identifier")
+    validate_model_pricing(model)
+    return model
+
+
+def _configured_reasoning_effort() -> ReasoningEffort:
+    """Apply the configured effort to assessment, review, and correction calls."""
+    try:
+        return ReasoningEffort(os.getenv("OPENAI_REASONING_EFFORT", "max"))
+    except ValueError as exc:
+        raise ValueError("OPENAI_REASONING_EFFORT must be low, medium, high, or max") from exc
 
 
 def _model_mode() -> str:
@@ -418,11 +455,42 @@ def _retry_lease_settings() -> tuple[int, float]:
     return max_poll_interval_ms, max_record_age_seconds
 
 
-def _openai_timeout_seconds() -> float:
-    timeout_seconds = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"))
-    if not 0 < timeout_seconds <= 60:
-        raise ValueError("OPENAI_TIMEOUT_SECONDS must be greater than 0 and at most 60")
+def _openai_timeout_seconds() -> float | None:
+    configured = os.getenv("OPENAI_TIMEOUT_SECONDS", "900")
+    if configured == "none":
+        if os.getenv("DEPLOYMENT_ENV") != "local" or not os.getenv("INPUT_TOPIC", "").startswith(
+            "pypi.releases.replay."
+        ):
+            raise ValueError("an unbounded HTTP timeout is only supported for local replay topics")
+        _retry_lease_settings()
+        return None
+    timeout_seconds = float(configured)
+    if not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 900:
+        raise ValueError("OPENAI_TIMEOUT_SECONDS must be greater than 0 and at most 900")
+    _, record_lease = _retry_lease_settings()
+    if timeout_seconds >= record_lease - _CONSUMER_OWNERSHIP_MARGIN_SECONDS:
+        raise ValueError("OPENAI_TIMEOUT_SECONDS must leave 60 seconds within the processing lease")
     return timeout_seconds
+
+
+def _output_token_budget(name: str) -> int:
+    try:
+        budget = int(os.getenv(name, "32000"))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer between 1 and 128000") from exc
+    if not 1 <= budget <= 128_000:
+        raise ValueError(f"{name} must be an integer between 1 and 128000")
+    return budget
+
+
+def _configured_service_tier() -> ServiceTier | None:
+    configured = os.getenv("OPENAI_SERVICE_TIER", "flex")
+    if configured == "auto":
+        return None
+    try:
+        return ServiceTier(configured)
+    except ValueError as exc:
+        raise ValueError("OPENAI_SERVICE_TIER must be auto, flex, or default") from exc
 
 
 def _retry_backoff_seconds() -> float:
