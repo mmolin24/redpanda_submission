@@ -43,9 +43,9 @@ partitions, offsets, and acknowledgements.
 ## Record path
 
 1. Connect reads a fixture, bounded history query, or the live PyPI RSS feed.
-2. It normalizes the package name, validates the candidate, drops valid
-   unmonitored releases, validates the complete event, and publishes monitored
-   records to `pypi.releases.v1`.
+2. It normalizes the package name, validates the complete release event once,
+   drops valid unmonitored releases, and publishes monitored records to
+   `pypi.releases.v1`.
 3. The worker gathers exact current and prior-release evidence and compiles a
    normalized change set.
 4. Package-neutral rules resolve supported metadata and artifact changes
@@ -95,8 +95,10 @@ consumer groups before the public-evidence worker and live source can start.
 Any failed gate prevents the live handoff and leaves retained state available
 for inspection.
 
-Live mode fetches public PyPI evidence. It defaults to the fake model; paid
-model use requires both `MODEL_MODE=openai` and a non-empty `OPENAI_API_KEY`.
+Live mode fetches public PyPI evidence. With the default `MODEL_MODE=auto`, an
+empty or unset `OPENAI_API_KEY` selects the fake model, while a configured key
+selects paid OpenAI calls. Setting `MODEL_MODE=fake` disables paid model calls
+even when a key is present.
 
 ## Analysis paths
 

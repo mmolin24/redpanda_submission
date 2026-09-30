@@ -214,6 +214,31 @@ class EvidenceFact:
     source: EvidenceSource
 
 
+def _evidence_fact_selection_key(fact: Json) -> tuple[int, Any, str, str]:
+    """Prioritize evidence source, then value priority, path, and citation ID."""
+    source_priority = {
+        "computed": 0,
+        "candidate": 1,
+        "context": 2,
+        "baseline": 3,
+    }.get(str(fact.get("source")), 4)
+
+    value = fact.get("value")
+    if isinstance(value, dict):
+        selection_priority = value.get("selection_priority", 100)
+        path = str(value.get("path", ""))
+    else:
+        selection_priority = 100
+        path = ""
+
+    return (
+        source_priority,
+        selection_priority,
+        path,
+        str(fact.get("evidence_id")),
+    )
+
+
 @dataclass(frozen=True)
 class EvidenceBundle:
     """Contain normalized candidate, baseline, computed, and contextual evidence."""
@@ -258,25 +283,7 @@ class EvidenceBundle:
         ]
         selection = bound_collection(
             facts,
-            selection_key=lambda fact: (
-                {
-                    "computed": 0,
-                    "candidate": 1,
-                    "context": 2,
-                    "baseline": 3,
-                }.get(str(fact.get("source")), 4),
-                (
-                    fact.get("value", {}).get("selection_priority", 100)
-                    if isinstance(fact.get("value"), dict)
-                    else 100
-                ),
-                (
-                    str(fact.get("value", {}).get("path", ""))
-                    if isinstance(fact.get("value"), dict)
-                    else ""
-                ),
-                str(fact.get("evidence_id")),
-            ),
+            selection_key=_evidence_fact_selection_key,
             manifest_values=complete_facts,
         )
         return {
@@ -339,17 +346,21 @@ class MaterialityResult:
     def from_dict(cls, value: Json) -> MaterialityResult:
         return cls(
             decision=Decision(value["decision"]),
-            change_types=tuple(str(x) for x in value.get("change_types", [])),
+            change_types=tuple(str(change_type) for change_type in value.get("change_types", [])),
             claims=tuple(
                 Claim(
-                    statement=str(c["statement"]),
-                    evidence_ids=tuple(str(x) for x in c.get("evidence_ids", [])),
-                    support=c["support"],
-                    conditions=tuple(str(x) for x in c.get("conditions", [])),
+                    statement=str(claim["statement"]),
+                    evidence_ids=tuple(
+                        str(evidence_id) for evidence_id in claim.get("evidence_ids", [])
+                    ),
+                    support=claim["support"],
+                    conditions=tuple(str(condition) for condition in claim.get("conditions", [])),
                 )
-                for c in value.get("claims", [])
+                for claim in value.get("claims", [])
             ),
-            missing_evidence=tuple(str(x) for x in value.get("missing_evidence", [])),
+            missing_evidence=tuple(
+                str(missing_evidence) for missing_evidence in value.get("missing_evidence", [])
+            ),
             confidence=float(value["confidence"]),
         )
 
@@ -387,20 +398,24 @@ class ApplicabilityResult:
             assessment=str(value["assessment"]),
             consumer_scenarios=tuple(
                 ConsumerScenario(
-                    impact_kind=item["impact_kind"],
-                    package=str(item["package"]),
-                    candidate_version=str(item["candidate_version"]),
-                    consumer_trigger=str(item["consumer_trigger"]),
-                    changed_behavior=str(item["changed_behavior"]),
-                    observable_outcome=str(item["observable_outcome"]),
-                    verification=str(item["verification"]),
-                    evidence_ids=tuple(str(x) for x in item.get("evidence_ids", [])),
-                    conditions=tuple(str(x) for x in item.get("conditions", [])),
+                    impact_kind=scenario["impact_kind"],
+                    package=str(scenario["package"]),
+                    candidate_version=str(scenario["candidate_version"]),
+                    consumer_trigger=str(scenario["consumer_trigger"]),
+                    changed_behavior=str(scenario["changed_behavior"]),
+                    observable_outcome=str(scenario["observable_outcome"]),
+                    verification=str(scenario["verification"]),
+                    evidence_ids=tuple(
+                        str(evidence_id) for evidence_id in scenario.get("evidence_ids", [])
+                    ),
+                    conditions=tuple(
+                        str(condition) for condition in scenario.get("conditions", [])
+                    ),
                 )
-                for item in value.get("consumer_scenarios", [])
+                for scenario in value.get("consumer_scenarios", [])
             ),
             confidence=float(value["confidence"]),
-            limitations=tuple(str(x) for x in value.get("limitations", [])),
+            limitations=tuple(str(limitation) for limitation in value.get("limitations", [])),
         )
 
     def to_dict(self) -> Json:

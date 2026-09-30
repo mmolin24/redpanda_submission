@@ -178,6 +178,48 @@ def test_materiality_replaces_one_oversized_fact_with_an_explicit_value_manifest
     )
 
 
+def test_model_view_retains_evidence_by_source_priority_and_tie_breakers_under_budget():
+    bundle = evidence()
+    payload = "x" * 7_500
+
+    def context_fact(evidence_id: str, selection_priority: int, path: str) -> EvidenceFact:
+        return EvidenceFact(
+            evidence_id=f"context.{evidence_id}",
+            value={"selection_priority": selection_priority, "path": path, "payload": payload},
+            source="context",
+        )
+
+    facts = (
+        context_fact("b-id-b", 100, "b"),
+        EvidenceFact(
+            evidence_id="baseline.version",
+            value={"selection_priority": 0, "path": "", "payload": payload},
+            source="baseline",
+        ),
+        context_fact("priority", 1, "z"),
+        EvidenceFact(evidence_id="candidate.none", value=None, source="candidate"),
+        context_fact("path-a", 100, "a"),
+        EvidenceFact(evidence_id="computed.scalar", value=payload, source="computed"),
+        context_fact("b-id-a", 100, "b"),
+        context_fact("b-id-c", 100, "b"),
+        context_fact("path-z", 100, "z"),
+    )
+
+    model_view = replace(bundle, facts=facts).model_view()
+
+    assert [fact["evidence_id"] for fact in model_view["facts"]] == [
+        "computed.scalar",
+        "candidate.none",
+        "context.priority",
+        "context.path-a",
+        "context.b-id-a",
+    ]
+    assert model_view["facts_summary"]["total_count"] == len(facts)
+    assert model_view["facts_summary"]["included_count"] == 5
+    assert model_view["facts_summary"]["omitted_count"] == 4
+    assert model_view["facts_summary"]["omitted"] is True
+
+
 def _request(model_input):
     return ModelRequest(
         purpose="materiality_assessment",

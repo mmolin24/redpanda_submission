@@ -56,6 +56,15 @@ class _Impact:
         }
 
 
+@dataclass(frozen=True)
+class _MacOSTargetChange:
+    baseline_target: str
+    candidate_target: str
+    architecture: str
+    baseline_tags: set[Tag]
+    candidate_tags: set[Tag]
+
+
 def compile_deterministic_impact(
     evidence: EvidenceBundle,
 ) -> DeterministicImpactCompilation | None:
@@ -331,27 +340,37 @@ def _wheel_compatibility(
             removed.discard(tag)
 
     mac_changes = _macos_target_changes(removed, added)
-    for old, new, arch, old_tags, new_tags in mac_changes:
-        removed.difference_update(old_tags)
-        added.difference_update(new_tags)
-        arch_label = _architecture_label(arch)
+    for macos_change in mac_changes:
+        removed.difference_update(macos_change.baseline_tags)
+        added.difference_update(macos_change.candidate_tags)
+        arch_label = _architecture_label(macos_change.architecture)
         affected_if = (
-            f"You install {package} {candidate_version} on macOS {arch_label} before {new}."
+            f"You install {package} {candidate_version} on macOS {arch_label} before "
+            f"{macos_change.candidate_target}."
         )
-        evidence_ids = _tag_evidence_ids(old_tags, baseline_tags) + _tag_evidence_ids(
-            new_tags, candidate_tags
-        )
+        evidence_ids = _tag_evidence_ids(
+            macos_change.baseline_tags, baseline_tags
+        ) + _tag_evidence_ids(macos_change.candidate_tags, candidate_tags)
         impacts.append(
             _Impact(
                 dimension="platform",
                 certainty="conditional",
                 headline=f"{package} {candidate_version} raises macOS target",
                 affected_if=affected_if,
-                changed_behavior=f"Published macOS {arch_label} wheels now target {new} instead of {old}.",
+                changed_behavior=(
+                    f"Published macOS {arch_label} wheels now target "
+                    f"{macos_change.candidate_target} instead of {macos_change.baseline_target}."
+                ),
                 observable_outcome="Older systems may need a source build or may be unable to install the release.",
                 recommended_action="Verify installation on the oldest supported macOS target before upgrading.",
-                verification=f"Inspect or install the {package}=={candidate_version} wheel on the target macOS version.",
-                not_affected_if=f"Your macOS {arch_label} environment is {new} or newer, or a compatible source build succeeds.",
+                verification=(
+                    f"Inspect or install the {package}=={candidate_version} wheel "
+                    "on the target macOS version."
+                ),
+                not_affected_if=(
+                    f"Your macOS {arch_label} environment is {macos_change.candidate_target} "
+                    "or newer, or a compatible source build succeeds."
+                ),
                 evidence_ids=tuple(dict.fromkeys(evidence_ids)),
                 conditions=(affected_if,),
                 change_type="platform_installability",
@@ -475,39 +494,69 @@ def _wheel_tags(files: Any, prefix: str) -> tuple[dict[Tag, str], dict[str, str]
     return tags, sdists
 
 
-def _macos_target_changes(
-    removed: set[Tag], added: set[Tag]
-) -> list[tuple[str, str, str, set[Tag], set[Tag]]]:
-    grouped_old: dict[tuple[str, str, str], dict[tuple[int, int], set[Tag]]] = {}
-    grouped_new: dict[tuple[str, str, str], dict[tuple[int, int], set[Tag]]] = {}
-    for source, target in ((removed, grouped_old), (added, grouped_new)):
-        for tag in source:
+def _macos_target_changes(removed: set[Tag], added: set[Tag]) -> list[_MacOSTargetChange]:
+    baseline_tags_by_compatibility: dict[tuple[str, str, str], dict[tuple[int, int], set[Tag]]] = {}
+    candidate_tags_by_compatibility: dict[
+        tuple[str, str, str], dict[tuple[int, int], set[Tag]]
+    ] = {}
+    for source_tags, compatibility_groups in (
+        (removed, baseline_tags_by_compatibility),
+        (added, candidate_tags_by_compatibility),
+    ):
+        for tag in source_tags:
             match = _MACOS_TAG.fullmatch(tag.platform)
             if not match:
                 continue
-            key = (tag.interpreter, tag.abi, match.group(3))
-            version = (int(match.group(1)), int(match.group(2)))
-            target.setdefault(key, {}).setdefault(version, set()).add(tag)
-    combined: dict[tuple[tuple[int, int], tuple[int, int], str], tuple[set[Tag], set[Tag]]] = {}
-    for key in set(grouped_old) & set(grouped_new):
-        old_version = min(grouped_old[key])
-        new_version = min(grouped_new[key])
-        if new_version <= old_version:
+            architecture = match.group(3)
+            comparison_key = (tag.interpreter, tag.abi, architecture)
+            tag_version = (int(match.group(1)), int(match.group(2)))
+            compatibility_groups.setdefault(comparison_key, {}).setdefault(tag_version, set()).add(
+                tag
+            )
+
+    combined_changes_by_version_and_architecture: dict[
+        tuple[tuple[int, int], tuple[int, int], str], tuple[set[Tag], set[Tag]]
+    ] = {}
+    shared_compatibility_keys = (
+        baseline_tags_by_compatibility.keys() & candidate_tags_by_compatibility.keys()
+    )
+    for interpreter, abi, architecture in shared_compatibility_keys:
+        comparison_key = (interpreter, abi, architecture)
+        baseline_tag_versions = baseline_tags_by_compatibility[comparison_key]
+        candidate_tag_versions = candidate_tags_by_compatibility[comparison_key]
+        baseline_target_version = min(baseline_tag_versions)
+        candidate_target_version = min(candidate_tag_versions)
+        if candidate_target_version <= baseline_target_version:
             continue
-        combined_key = (old_version, new_version, key[2])
-        old_tags, new_tags = combined.setdefault(combined_key, (set(), set()))
-        old_tags.update(grouped_old[key][old_version])
-        new_tags.update(grouped_new[key][new_version])
-    return [
-        (
-            f"{old[0]}.{old[1]}",
-            f"{new[0]}.{new[1]}",
-            arch,
-            old_tags,
-            new_tags,
+        combined_key = (
+            baseline_target_version,
+            candidate_target_version,
+            architecture,
         )
-        for (old, new, arch), (old_tags, new_tags) in sorted(combined.items())
-    ]
+        baseline_tags, candidate_tags = combined_changes_by_version_and_architecture.setdefault(
+            combined_key, (set(), set())
+        )
+        baseline_tags.update(baseline_tag_versions[baseline_target_version])
+        candidate_tags.update(candidate_tag_versions[candidate_target_version])
+
+    changes: list[_MacOSTargetChange] = []
+    for (
+        baseline_target_version,
+        candidate_target_version,
+        architecture,
+    ), (baseline_tags, candidate_tags) in sorted(
+        combined_changes_by_version_and_architecture.items()
+    ):
+        changes.append(
+            _MacOSTargetChange(
+                baseline_target=f"{baseline_target_version[0]}.{baseline_target_version[1]}",
+                candidate_target=f"{candidate_target_version[0]}.{candidate_target_version[1]}",
+                architecture=architecture,
+                baseline_tags=baseline_tags,
+                candidate_tags=candidate_tags,
+            )
+        )
+    return changes
 
 
 def _tag_evidence_ids(tags: Any, mapping: dict[Tag, str]) -> tuple[str, ...]:
