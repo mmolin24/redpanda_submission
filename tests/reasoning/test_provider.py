@@ -13,6 +13,7 @@ from reasoning_worker.provider import (
     ModelRequest,
     OpenAIResponsesProvider,
     ProviderExhausted,
+    ProviderIncomplete,
 )
 from reasoning_worker.telemetry import WorkerTelemetry
 
@@ -38,7 +39,7 @@ class Responses:
         return SimpleNamespace(
             id="resp_1",
             status="completed",
-            model="gpt-5.6-sol-2026-07-01",
+            model="gpt-6-luna",
             service_tier="flex",
             output=[],
             output_text=json.dumps(
@@ -101,12 +102,13 @@ def test_openai_adapter_owns_retry_ids_and_captures_visible_payload_only(
     ids = [options["default_headers"]["X-Client-Request-Id"] for options in client.headers]
     assert len(set(ids)) == 2
     assert all(body["store"] is False for body in client.bodies)
-    assert all(body["model"] == "gpt-5.6-sol" for body in client.bodies)
+    assert all(body["model"] == "gpt-6-luna" for body in client.bodies)
+    assert all(body["reasoning"] == {"effort": "max"} for body in client.bodies)
     assert result.call.usage.reasoning_tokens == 2
     assert result.call.usage.output_tokens == 10
     assert result.call.usage.cached_input_tokens == 20
     assert result.call.usage.cache_write_tokens == 30
-    assert result.call.estimated_cost_usd == 0.00037375
+    assert result.call.estimated_cost_usd == 0.00000697
     assert result.call.response_payload is not None
     assert result.call.request_payload is not None
     assert "reasoning" not in result.call.response_payload
@@ -345,7 +347,8 @@ def test_provider_spans_never_export_raw_exception_text_or_stacktraces():
     } == {"bad_request", "provider_exhausted"}
 
 
-def test_model_call_persists_the_genai_span_id_and_metrics():
+@pytest.mark.parametrize("incomplete", [False, True])
+def test_model_call_persists_the_genai_span_id_and_metrics(incomplete):
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -358,25 +361,35 @@ def test_model_call_persists_the_genai_span_id_and_metrics():
     telemetry = WorkerTelemetry(tracer_provider.get_tracer("test"))
     client = Client()
     client.calls = 1
-    result = OpenAIResponsesProvider(client, telemetry=telemetry).complete(
-        ModelRequest(
-            purpose="materiality_assessment",
-            instructions="Classify",
-            model_input={"evidence": {"facts": []}},
-            output_schema=MATERIALITY_SCHEMA,
-            output_schema_name="materiality_assessment",
-        )
+    if incomplete:
+        response = client.responses.create()
+        response.status = "incomplete"
+        response.incomplete_details = {"reason": "max_output_tokens"}
+        client.responses.create = lambda **_body: response
+    provider = OpenAIResponsesProvider(client, telemetry=telemetry)
+    request = ModelRequest(
+        purpose="materiality_assessment",
+        instructions="Classify",
+        model_input={"evidence": {"facts": []}},
+        output_schema=MATERIALITY_SCHEMA,
+        output_schema_name="materiality_assessment",
     )
+    if incomplete:
+        with pytest.raises(ProviderIncomplete) as failure:
+            provider.complete(request)
+        call = failure.value.call
+    else:
+        call = provider.complete(request).call
     model_span = next(
         span
         for span in exporter.get_finished_spans()
         if span.name.startswith("materiality_assessment")
     )
     assert model_span.context is not None
-    assert result.call.span_id == f"{model_span.context.span_id:016x}"
+    assert call.span_id == f"{model_span.context.span_id:016x}"
     metrics = telemetry.metrics.render().decode()
     assert (
-        'pypi_reasoning_model_calls_total{purpose="materiality_assessment",outcome="completed",service_tier="flex"} 1'
+        f'pypi_reasoning_model_calls_total{{purpose="materiality_assessment",outcome="{call.outcome}",service_tier="flex"}} 1'
         in metrics
     )
     assert (
@@ -389,3 +402,10 @@ def test_model_call_persists_the_genai_span_id_and_metrics():
     )
     assert model_span.attributes is not None
     assert model_span.attributes["pypi.gen_ai.cache_write_tokens"] == 30
+    assert model_span.attributes["gen_ai.usage.output_tokens"] == 10
+    assert model_span.attributes["pypi.gen_ai.reasoning_tokens"] == 2
+    assert model_span.attributes["gen_ai.response.id"] == "resp_1"
+    assert model_span.attributes["gen_ai.response.service_tier"] == "flex"
+    assert model_span.attributes["pypi.gen_ai.max_output_tokens"] == request.max_output_tokens
+    if incomplete:
+        assert model_span.attributes["pypi.gen_ai.incomplete_reason"] == "max_output_tokens"

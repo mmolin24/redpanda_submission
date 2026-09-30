@@ -150,9 +150,11 @@ def test_golden_substantive_case_reaches_applicability_and_publishable_customer_
         "applicability",
         "customer_impact",
     ]
+    assert all(request.model == "gpt-6-luna" for request in provider.requests)
+    assert all(request.reasoning_effort.value == "max" for request in provider.requests)
     assert provider.requests[0].output_schema["properties"]["claims"]["maxItems"] == 4
     assert provider.requests[1].model_input["monitoring_context"]["directly_monitored"] is True
-    assert provider.requests[1].max_output_tokens == 2400
+    assert provider.requests[1].max_output_tokens == 10000
     assert provider.requests[1].output_schema["properties"]["consumer_scenarios"]["maxItems"] == 1
     scenario_schema = provider.requests[1].output_schema["properties"]["consumer_scenarios"]
     assert scenario_schema["minItems"] == scenario_schema["maxItems"] == 1
@@ -168,8 +170,7 @@ def test_golden_substantive_case_reaches_applicability_and_publishable_customer_
     assert terminal.gate_results["customer_impact"]["customer_summary"]["headline"] == (
         "Python 3.9 blocks dependency-b 2.0.0"
     )
-    assert provider.requests[2].model == "gpt-5.6-terra"
-    assert provider.requests[2].max_output_tokens == 2400
+    assert provider.requests[2].max_output_tokens == 10000
     assert "observability" not in provider.requests[2].model_input
     assert terminal.gate_results["versions"]["customer_impact_policy_version"] == (
         "customer-impact-summary-v5"

@@ -203,6 +203,7 @@ class _SpanScope(AbstractContextManager["_SpanScope"]):
 
     def set_result(self, call: ModelCallRecord) -> None:
         self.set_attribute("gen_ai.response.model", call.returned_model or "unknown")
+        self.set_attribute("gen_ai.response.service_tier", call.returned_service_tier)
         self.set_attribute(
             "gen_ai.response.id",
             call.attempts[-1].response_id if call.attempts else None,
@@ -279,6 +280,7 @@ class WorkerTelemetry:
         scope.set_attribute("gen_ai.request.model", request.model)
         scope.set_attribute("gen_ai.request.service_tier", request.service_tier.value)
         scope.set_attribute("gen_ai.request.reasoning_effort", request.reasoning_effort.value)
+        scope.set_attribute("pypi.gen_ai.max_output_tokens", request.max_output_tokens)
         scope.set_attribute("pypi.model_call.id", model_call_id)
         # Return a scope already carrying attributes; avoid leaking content attributes.
         return _EnteredScope(scope)

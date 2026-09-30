@@ -114,17 +114,25 @@ class ReasoningPipeline:
         ),
         monitored_packages: MonitoredPackages | None = None,
         analysis_policy_revision: str = "analysis-policy-v1",
+        service_tier_override: ServiceTier | None = None,
+        model: str = "gpt-6-luna",
+        reasoning_effort: ReasoningEffort = ReasoningEffort.MAX,
     ) -> None:
         if re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", analysis_policy_revision) is None:
             raise ValueError("analysis policy revision must be a bounded stable identifier")
         self.enricher = enricher
         self.materiality = materiality
         self.applicability = applicability
-        self.customer_impact = customer_impact or CustomerImpactEngine(applicability.provider)
+        self.customer_impact = customer_impact or CustomerImpactEngine(
+            applicability.provider, model=model, reasoning_effort=reasoning_effort
+        )
         self.confidence_threshold = confidence_threshold
         self.environment_profiles = environment_profiles
         self.monitored_packages = monitored_packages
         self.analysis_policy_revision = analysis_policy_revision
+        self.service_tier_override = service_tier_override
+        self.model = model
+        self.reasoning_effort = reasoning_effort
 
     def process(
         self,
@@ -142,6 +150,7 @@ class ReasoningPipeline:
             if isinstance(stage, dict)
         ]
         model_calls: list[ModelCallRecord] = []
+        # Recheck scope here so a misrouted source record cannot enter analysis.
         if self.monitored_packages and not self.monitored_packages.contains(
             event.package.normalized_name
         ):
@@ -157,9 +166,16 @@ class ReasoningPipeline:
             routing = self._stage(
                 stages,
                 "routing",
-                lambda: route(is_prerelease=is_prerelease, evidence=evidence),
+                lambda: route(
+                    is_prerelease=is_prerelease,
+                    evidence=evidence,
+                    service_tier_override=self.service_tier_override,
+                    model=self.model,
+                    reasoning_effort=self.reasoning_effort,
+                ),
             )
             stages[-1]["detail"] = routing.analysis_eligibility
+            # Conclusive zero-model routes exit here; unresolved evidence falls through.
             if routing.analysis_eligibility == "observe_only":
                 return self._finding(
                     event,
@@ -215,6 +231,7 @@ class ReasoningPipeline:
                     stages,
                     started_at,
                 )
+            # Model assistance begins only after every supported deterministic route is exhausted.
             materiality = self._stage(
                 stages,
                 "materiality",
@@ -262,6 +279,7 @@ class ReasoningPipeline:
                 confidence_threshold=self.confidence_threshold,
                 versions=versions,
             )
+            # Customer-facing generation requires validated materiality and applicability inputs.
             if customer_impact_inputs.valid:
                 customer_impact = self._stage(
                     stages,
@@ -430,6 +448,18 @@ class ReasoningPipeline:
     ) -> Json:
         pieces = {
             "analysis_policy_revision": self.analysis_policy_revision,
+            "model_execution_settings": {
+                "model": self.model,
+                "reasoning_effort": self.reasoning_effort,
+                "customer_impact_model": self.customer_impact.model,
+                "customer_impact_reasoning_effort": self.customer_impact.reasoning_effort,
+                "materiality_max_output_tokens": self.materiality.max_output_tokens,
+                "applicability_max_output_tokens": self.applicability.max_output_tokens,
+                "customer_impact_max_output_tokens": self.customer_impact.max_output_tokens,
+                "service_tier_override": self.service_tier_override,
+                "materiality_review_service_tier": self.materiality.review_service_tier,
+                "customer_impact_service_tier": self.customer_impact.service_tier,
+            },
             "materiality_prompt_hash": sha256_json(MATERIALITY_INSTRUCTIONS),
             "applicability_prompt_hash": sha256_json(APPLICABILITY_INSTRUCTIONS),
             "materiality_schema_hash": sha256_json(MATERIALITY_SCHEMA),
@@ -579,8 +609,12 @@ def route(
     *,
     is_prerelease: bool,
     evidence: EvidenceBundle,
+    service_tier_override: ServiceTier | None = None,
+    model: str = "gpt-6-luna",
+    reasoning_effort: ReasoningEffort = ReasoningEffort.MAX,
 ) -> RoutingEnvelope:
     """Choose the cheapest conclusive analysis path for compiled evidence."""
+    # Ordering is the correctness boundary: only conclusive evidence may avoid model review.
     complexity = _complexity(evidence)
     if is_prerelease:
         return RoutingEnvelope(
@@ -615,15 +649,17 @@ def route(
             reasoning_effort=None,
         )
     priority = Priority.HIGH if complexity == "complex" else Priority.MEDIUM
-    tier = ServiceTier.DEFAULT if complexity == "complex" else ServiceTier.FLEX
+    tier = service_tier_override or (
+        ServiceTier.DEFAULT if complexity == "complex" else ServiceTier.FLEX
+    )
     return RoutingEnvelope(
         processing_priority=priority,
         analysis_eligibility="model",
         reasoning_complexity=complexity,
         reasons=("explicitly_monitored_package", f"evidence_complexity:{complexity}"),
         service_tier=tier,
-        model="gpt-5.6-sol",
-        reasoning_effort=ReasoningEffort.LOW,
+        model=model,
+        reasoning_effort=reasoning_effort,
     )
 
 

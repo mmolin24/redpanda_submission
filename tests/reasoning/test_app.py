@@ -17,6 +17,7 @@ from reasoning_worker.app import (
     _Metrics,
     _model_mode,
     _openai_timeout_seconds,
+    _output_token_budget,
     _producer_config,
     _retry_backoff_seconds,
     _retry_lease_settings,
@@ -286,9 +287,65 @@ def test_openai_request_timeout_is_bounded_by_the_processing_lease(monkeypatch):
     monkeypatch.setenv("OPENAI_TIMEOUT_SECONDS", "60")
     assert _openai_timeout_seconds() == 60
 
-    monkeypatch.setenv("OPENAI_TIMEOUT_SECONDS", "61")
-    with pytest.raises(ValueError, match="at most 60"):
+    monkeypatch.setenv("OPENAI_TIMEOUT_SECONDS", "900")
+    assert _openai_timeout_seconds() == 900
+
+    monkeypatch.setenv("OPENAI_TIMEOUT_SECONDS", "901")
+    with pytest.raises(ValueError, match="at most 900"):
         _openai_timeout_seconds()
+
+    monkeypatch.setenv("OPENAI_TIMEOUT_SECONDS", "900")
+    monkeypatch.setenv("PROCESSING_RETRY_MAX_ELAPSED_SECONDS", "960")
+    with pytest.raises(ValueError, match="within the processing lease"):
+        _openai_timeout_seconds()
+
+
+def test_local_replay_can_disable_http_timeout_but_retains_finite_ownership_lease(monkeypatch):
+    monkeypatch.setenv("OPENAI_TIMEOUT_SECONDS", "none")
+    monkeypatch.setenv("DEPLOYMENT_ENV", "local")
+    monkeypatch.setenv("INPUT_TOPIC", "pypi.releases.replay.timeout-check.v1")
+    assert _openai_timeout_seconds() is None
+
+    monkeypatch.setenv("PROCESSING_RETRY_MAX_ELAPSED_SECONDS", "inf")
+    with pytest.raises(ValueError, match="must be finite"):
+        _openai_timeout_seconds()
+
+
+@pytest.mark.parametrize(
+    ("environment", "topic"),
+    [("production", "pypi.releases.replay.timeout-check.v1"), ("local", "pypi.releases.v1")],
+)
+def test_unbounded_http_timeout_is_restricted_to_local_replays(monkeypatch, environment, topic):
+    monkeypatch.setenv("OPENAI_TIMEOUT_SECONDS", "none")
+    monkeypatch.setenv("DEPLOYMENT_ENV", environment)
+    monkeypatch.setenv("INPUT_TOPIC", topic)
+    with pytest.raises(ValueError, match="only supported for local replay"):
+        _openai_timeout_seconds()
+
+
+@pytest.mark.parametrize("value", ["0", "128001", "nan", "1.5"])
+def test_output_token_budget_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("MATERIALITY_MAX_OUTPUT_TOKENS", value)
+    with pytest.raises(ValueError, match="MATERIALITY_MAX_OUTPUT_TOKENS"):
+        _output_token_budget("MATERIALITY_MAX_OUTPUT_TOKENS")
+
+
+def test_configured_pipeline_uses_larger_budgets_and_flex_for_every_stage(monkeypatch):
+    monkeypatch.setenv("MODEL_MODE", "fake")
+    monkeypatch.setenv("FIXTURE_HISTORY_PATH", "data/fixtures/package-history.json")
+    monkeypatch.setenv("OPENAI_SERVICE_TIER", "flex")
+    for name in ("MATERIALITY", "APPLICABILITY", "CUSTOMER_IMPACT"):
+        monkeypatch.setenv(f"{name}_MAX_OUTPUT_TOKENS", "32000")
+    pipeline = build_pipeline(
+        load_monitored_packages(Path("config/monitored-packages.json")), WorkerTelemetry()
+    )
+    assert pipeline.materiality.max_output_tokens == 32000
+    assert pipeline.applicability.max_output_tokens == 32000
+    assert pipeline.customer_impact.max_output_tokens == 32000
+    assert pipeline.materiality.review_service_tier.value == "flex"
+    assert pipeline.customer_impact.service_tier.value == "flex"
+    assert pipeline.service_tier_override is not None
+    assert pipeline.service_tier_override.value == "flex"
 
 
 def test_reasoning_producer_has_explicit_headroom_above_terminal_budget():
