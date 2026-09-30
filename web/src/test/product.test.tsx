@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "../pages/Dashboard";
 import { Finding } from "../pages/Finding";
@@ -21,7 +21,119 @@ import {
 
 afterEach(() => vi.restoreAllMocks());
 
+function FindingNavigation() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <Finding />
+      <button
+        onClick={() => {
+          void navigate(-1);
+        }}
+      >
+        Back to results
+      </button>
+    </>
+  );
+}
+
 describe("findings dashboard", () => {
+  it("restores filters, view, and sorting after opening a finding and going Back", async () => {
+    const fetch = mockFetch({
+      "/api/findings/finding-1/trace-summary": trace,
+      "/api/findings/finding-1": findingDetail,
+      "/api/findings?": findingPage,
+      "/api/stats": stats,
+      "/api/ops/summary": { status: "healthy", freshness: {} },
+    });
+    render(
+      <MemoryRouter>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/findings/:findingId" element={<FindingNavigation />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findAllByRole("link", { name: "requests" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Package" }), {
+      target: { value: "req" },
+    });
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(expect.stringContaining("package=req"), expect.anything()),
+    );
+    fireEvent.change(screen.getByRole("combobox", { name: "Change type" }), {
+      target: { value: "dependency_contract" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Full table" }));
+    fireEvent.click(screen.getByText("Advanced filters"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Priority" }), {
+      target: { value: "high" },
+    });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Minimum confidence (%)" }), {
+      target: { value: "65" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Release event" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh data" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("link", { name: "Open requests finding" }));
+    expect(await screen.findByRole("link", { name: "Back to findings" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("view=full"),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Back to results" }));
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("link", { name: "Open requests finding" }));
+    fireEvent.click(await screen.findByRole("link", { name: "Back to findings" }));
+    await screen.findByRole("table");
+    expect(screen.getByRole("textbox", { name: "Package" })).toHaveValue("req");
+    expect(screen.getByRole("combobox", { name: "Change type" })).toHaveValue(
+      "dependency_contract",
+    );
+    expect(screen.getByRole("combobox", { name: "Priority" })).toHaveValue("high");
+    expect(screen.getByRole("spinbutton", { name: "Minimum confidence (%)" })).toHaveValue(65);
+    expect(screen.getByRole("button", { name: "Full table" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("columnheader", { name: "Release event" })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+  });
+
+  it("ignores invalid filters in a shared URL before requesting findings", async () => {
+    const fetch = mockFetch({
+      "/api/findings?": findingPage,
+      "/api/stats": stats,
+      "/api/ops/summary": { status: "healthy", freshness: {} },
+    });
+    render(
+      <MemoryRouter
+        initialEntries={[
+          "/?min_confidence=101&processing_priority=urgent&sort_direction=sideways&view=other",
+        ]}
+      >
+        <Dashboard />
+      </MemoryRouter>,
+    );
+    await screen.findAllByRole("link", { name: "requests" });
+    const queries = fetch.mock.calls
+      .map(([input]) => new URL(requestUrl(input), "http://localhost"))
+      .filter((url) => url.pathname === "/api/findings");
+    expect(
+      queries.every(
+        (url) =>
+          !url.searchParams.has("min_confidence") && !url.searchParams.has("processing_priority"),
+      ),
+    ).toBe(true);
+    expect(screen.getByRole("button", { name: "Quick scan" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(screen.getByText("Advanced filters"));
+    expect(screen.getByRole("spinbutton", { name: "Minimum confidence (%)" })).toHaveValue(null);
+    expect(screen.getByRole("combobox", { name: "Priority" })).toHaveValue("");
+  });
+
   it("renders ranked findings and operational summary", async () => {
     const fetch = mockFetch({
       "/api/findings?": findingPage,
@@ -63,6 +175,7 @@ describe("findings dashboard", () => {
     expect(screen.getAllByText(finding.assessment!)).toHaveLength(2);
     expect(screen.getByText("Dashboard data healthy")).toHaveAttribute("role", "status");
     expect(screen.getByText("Fixture data")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Data details"));
     expect(screen.getByText("Static fixture data is available.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Processing records to review")).not.toBeInTheDocument();
     expect(
@@ -107,7 +220,7 @@ describe("findings dashboard", () => {
       </MemoryRouter>,
     );
     await screen.findAllByRole("link", { name: "requests" });
-    fireEvent.click(screen.getByText("Filters"));
+    fireEvent.click(screen.getByText("Advanced filters"));
     const input = screen.getByRole("spinbutton", { name: "Minimum confidence (%)" });
     fireEvent.change(input, { target: { value: "65" } });
     await waitFor(() =>
@@ -257,14 +370,12 @@ describe("findings dashboard", () => {
       </MemoryRouter>,
     );
     await screen.findAllByRole("link", { name: "requests" });
-    fireEvent.click(screen.getByText("Filters"));
     const input = screen.getByRole("textbox", { name: "Package" });
-    const disclosure = input.closest("details");
+    expect(input.closest("details")).toBeNull();
     input.focus();
     fireEvent.change(input, { target: { value: "missing" } });
     await screen.findByText("Refreshing findings… Showing previous results.");
     expect(input).toHaveFocus();
-    expect(disclosure).toHaveAttribute("open");
     expect(screen.getAllByRole("link", { name: "requests" })).toHaveLength(2);
     await act(async () =>
       finishRequest(new Response(JSON.stringify({ detail: "Unavailable" }), { status: 503 })),
@@ -272,7 +383,6 @@ describe("findings dashboard", () => {
     await screen.findByRole("button", { name: "Retry" });
     expect(screen.getByRole("textbox", { name: "Package" })).toBe(input);
     expect(input).toHaveFocus();
-    expect(disclosure).toHaveAttribute("open");
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(await screen.findAllByRole("link", { name: "requests" })).toHaveLength(2);
   });
@@ -290,7 +400,7 @@ describe("findings dashboard", () => {
     );
     await screen.findAllByRole("link", { name: "requests" });
     fireEvent.click(screen.getByRole("button", { name: "Full table" }));
-    fireEvent.click(screen.getByText("Filters"));
+    fireEvent.click(screen.getByText("Advanced filters"));
     fireEvent.change(screen.getByRole("combobox", { name: "Priority" }), {
       target: { value: "high" },
     });
@@ -358,14 +468,11 @@ describe("findings dashboard", () => {
       </MemoryRouter>,
     );
     expect(await screen.findAllByRole("link", { name: "requests" })).toHaveLength(2);
-    fireEvent.click(screen.getByText("Filters"));
-    const filterDisclosure = screen.getByText("Filters").closest("details");
-    expect(filterDisclosure).toHaveAttribute("open");
+    expect(screen.getByRole("textbox", { name: "Package" }).closest("details")).toBeNull();
     fireEvent.change(screen.getByRole("textbox", { name: "Package" }), {
       target: { value: "no-such-package" },
     });
     expect(await screen.findByText("No findings match these filters.")).toBeInTheDocument();
-    expect(filterDisclosure).toHaveAttribute("open");
     expect(screen.getByRole("textbox", { name: "Package" })).toHaveValue("no-such-package");
     expect(screen.getAllByRole("button", { name: "Clear filters" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));

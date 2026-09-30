@@ -8,7 +8,7 @@ import {
   RotateCcw,
   Timer,
 } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { api } from "../api";
 import { MarkdownText } from "../MarkdownText";
 import {
@@ -27,6 +27,12 @@ type UnknownRecord = Record<string, unknown>;
 
 export function Finding() {
   const { findingId = "" } = useParams();
+  const location = useLocation();
+  const dashboardSearch = asRecord(location.state)?.dashboardSearch;
+  const returnTo =
+    typeof dashboardSearch === "string" && dashboardSearch.startsWith("?")
+      ? `/${dashboardSearch}`
+      : "/";
   const detail = useAsync((signal) => api.finding(findingId, signal), [findingId]);
   const trace = useAsync((signal) => api.traceSummary(findingId, signal), [findingId]);
 
@@ -101,7 +107,7 @@ export function Finding() {
 
   return (
     <div className="page finding-page">
-      <Link className="back-link" to="/">
+      <Link className="back-link" to={returnTo}>
         <ArrowLeft aria-hidden="true" /> Back to findings
       </Link>
 
