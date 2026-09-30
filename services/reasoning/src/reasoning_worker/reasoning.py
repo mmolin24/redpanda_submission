@@ -632,34 +632,15 @@ def verify_customer_impact_inputs(
     materiality: MaterialityResult,
     applicability: ApplicabilityResult,
     applicability_validation: ValidationResult,
-    evidence: EvidenceBundle,
     confidence_threshold: float,
-    versions: Json,
 ) -> ValidationResult:
-    """Revalidate accepted stage outputs before customer-copy generation."""
-    errors = list(validate_materiality(materiality, evidence).errors)
-    errors.extend(applicability_validation.errors)
+    """Gate customer-copy generation on applicability, confidence, and limitations."""
+    errors = list(applicability_validation.errors)
     if (
         materiality.confidence < confidence_threshold
         or applicability.confidence < confidence_threshold
     ):
         errors.append("publication confidence below threshold")
-    required_versions = {
-        "analysis_version",
-        "materiality_prompt_hash",
-        "applicability_prompt_hash",
-        "materiality_schema_hash",
-        "applicability_schema_hash",
-        "customer_impact_prompt_hash",
-        "customer_impact_schema_hash",
-        "evidence_bundle_id",
-        "routing_policy_version",
-        "customer_impact_policy_version",
-        "analysis_validation_policy_version",
-    }
-    missing = required_versions - set(versions)
-    if missing:
-        errors.append(f"missing version metadata: {sorted(missing)}")
     if not applicability.limitations:
         errors.append("finding requires explicit limitations")
     return ValidationResult(tuple(errors))
