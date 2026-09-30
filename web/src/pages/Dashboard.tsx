@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   Activity,
-  AlertTriangle,
   ArrowDown,
   ArrowRight,
   ArrowUp,
@@ -27,6 +26,7 @@ import {
 } from "../components";
 import { useAsync, useDebouncedValue } from "../hooks";
 import { formatChangeType } from "../presentation";
+import { MarkdownText } from "../MarkdownText";
 import type { FindingPage, FindingSummary } from "../types";
 
 type ViewMode = "quick" | "full";
@@ -37,6 +37,29 @@ export function Dashboard() {
     sort_direction: "desc",
   });
   const [viewMode, setViewMode] = useState<ViewMode>("quick");
+  const [confidencePercent, setConfidencePercent] = useState("");
+  const confidenceError =
+    confidencePercent !== "" &&
+    (!Number.isFinite(Number(confidencePercent)) ||
+      Number(confidencePercent) < 0 ||
+      Number(confidencePercent) > 100)
+      ? "Enter a percentage from 0 to 100."
+      : null;
+  const updateConfidence = (value: string) => {
+    setConfidencePercent(value);
+    const percentage = Number(value);
+    if (value !== "" && (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)) {
+      return;
+    }
+    setFilters((current) => ({
+      ...current,
+      min_confidence: value === "" ? undefined : String(percentage / 100),
+    }));
+  };
+  const clearFilters = () => {
+    setConfidencePercent("");
+    setFilters({ sort_by: "event_time", sort_direction: "desc" });
+  };
   const debouncedPackage = useDebouncedValue(filters.package ?? "", 300);
   const appliedFilters = {
     ...filters,
@@ -84,18 +107,12 @@ export function Dashboard() {
     filters.package,
     filters.change_type,
     filters.processing_priority,
-    filters.min_confidence,
+    confidencePercent,
   ].filter(Boolean).length;
   const summary = stats.data ?? null;
   const latestObservedRelease = summary?.latest_release ?? null;
   const pipelineStatus = ops.data?.status ?? (ops.status === "error" ? "degraded" : "unknown");
   const freshness = ops.data?.freshness ?? null;
-  const unresolvedFailures = ops.data
-    ? (ops.data.attention?.unresolved_failures ?? ops.data.unresolved_failures ?? 0)
-    : 0;
-  const attentionDetail = ops.data
-    ? (ops.data.attention?.detail ?? "Retained processing records need review.")
-    : null;
   const releaseCount = findings.data ? releases.length : "—";
 
   let latestReleaseDetail: string;
@@ -126,11 +143,7 @@ export function Dashboard() {
     findingsContent = (
       <EmptyState
         action={
-          <button
-            className="button"
-            type="button"
-            onClick={() => setFilters({ sort_by: "event_time", sort_direction: "desc" })}
-          >
+          <button className="button" type="button" onClick={clearFilters}>
             Clear filters
           </button>
         }
@@ -183,19 +196,6 @@ export function Dashboard() {
         </div>
       </section>
 
-      {unresolvedFailures > 0 && (
-        <section className="data-attention" role="status" aria-label="Processing records to review">
-          <AlertTriangle aria-hidden="true" />
-          <div>
-            <strong>
-              {unresolvedFailures} processing {unresolvedFailures === 1 ? "record" : "records"} need
-              review
-            </strong>
-            <span>{attentionDetail}</span>
-          </div>
-        </section>
-      )}
-
       <section className="glance-grid" aria-label="Findings at a glance">
         <GlanceCard
           icon={<Clock3 aria-hidden="true" />}
@@ -222,69 +222,6 @@ export function Dashboard() {
           detail={latestReleaseDetail}
         />
       </section>
-
-      {latestObservedRelease?.publishable === false && (
-        <section
-          className="release-observation"
-          role="status"
-          aria-label="Latest monitored release status"
-        >
-          <Clock3 aria-hidden="true" />
-          <div>
-            <strong>
-              {latestObservedRelease.package_name} {latestObservedRelease.version} was monitored
-            </strong>
-            <span>
-              {latestObservedRelease.disposition === "insufficient_evidence"
-                ? "Published as an evidence-limited analysis; no customer-impact conclusion was produced."
-                : `${formatDisposition(latestObservedRelease.disposition)}. No customer-facing finding was published because the analysis did not pass the publication boundary.`}
-            </span>
-          </div>
-        </section>
-      )}
-
-      {findings.data && insufficientItems.length > 0 && (
-        <section className="insufficient-section" aria-labelledby="needs-evidence-title">
-          <div className="section-heading-row">
-            <div>
-              <p className="eyebrow">Evidence-limited analyses</p>
-              <h2 id="needs-evidence-title">Needs evidence</h2>
-              <p>
-                These releases were analyzed, but the available evidence could not support a
-                customer-impact conclusion.
-              </p>
-            </div>
-            <span>{insufficientItems.length} analyses</span>
-          </div>
-          <div className="insufficient-list">
-            {insufficientItems.slice(0, 3).map((item) => (
-              <article key={item.finding_id} className="insufficient-card">
-                <FileSearch aria-hidden="true" />
-                <div>
-                  <h3>
-                    <Link to={`/findings/${encodeURIComponent(item.finding_id)}`}>
-                      {item.package_name} {item.candidate_version}
-                    </Link>
-                  </h3>
-                  <p>
-                    {item.assessment ??
-                      "The analysis did not identify a supported impact scenario."}
-                  </p>
-                  <div className="badge-row">
-                    <Badge tone="insufficient">Insufficient evidence</Badge>
-                    {item.change_types.slice(0, 2).map((change) => (
-                      <Badge key={change}>{formatChangeType(change)}</Badge>
-                    ))}
-                  </div>
-                </div>
-                <Link className="card-link" to={`/findings/${encodeURIComponent(item.finding_id)}`}>
-                  Review evidence <ArrowRight aria-hidden="true" />
-                </Link>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
 
       {findings.data && reviewFirst.length > 0 && (
         <section className="focus-section" aria-labelledby="review-first-title">
@@ -355,11 +292,7 @@ export function Dashboard() {
                 findings.status === "error" ||
                 !findings.data) &&
                 activeFilterCount > 0 && (
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => setFilters({ sort_by: "event_time", sort_direction: "desc" })}
-                  >
+                  <button type="button" className="text-button" onClick={clearFilters}>
                     Clear filters
                   </button>
                 )}
@@ -401,26 +334,82 @@ export function Dashboard() {
                   <option value="low">Low</option>
                 </select>
               </label>
-              <label>
-                Minimum confidence
+              <div className="confidence-field">
+                <label htmlFor="minimum-confidence">Minimum confidence (%)</label>
                 <input
+                  id="minimum-confidence"
                   type="number"
                   min="0"
-                  max="1"
-                  step="0.05"
-                  value={filters.min_confidence ?? ""}
-                  onChange={(event) =>
-                    setFilters({ ...filters, min_confidence: event.target.value })
-                  }
-                  placeholder="0.65"
+                  max="100"
+                  step="any"
+                  value={confidencePercent}
+                  onChange={(event) => updateConfidence(event.target.value)}
+                  placeholder="65"
+                  aria-invalid={confidenceError ? true : undefined}
+                  aria-describedby="confidence-feedback"
                 />
-              </label>
+                <p
+                  id="confidence-feedback"
+                  className={`field-hint${confidenceError ? " field-error" : ""}`}
+                  role={confidenceError ? "alert" : undefined}
+                >
+                  {confidenceError ?? "0–100%; leave blank for any confidence."}
+                </p>
+              </div>
             </div>
           </div>
         </details>
 
         {findingsContent}
       </section>
+
+      {findings.data && insufficientItems.length > 0 && (
+        <section className="insufficient-section" aria-labelledby="needs-evidence-title">
+          <details className="insufficient-disclosure">
+            <summary>
+              <h2 id="needs-evidence-title">Needs evidence</h2>
+              <span>{insufficientItems.length} analyses</span>
+              <ChevronDown className="disclosure-chevron" aria-hidden="true" />
+            </summary>
+            <div className="insufficient-content">
+              <p>
+                These releases were analyzed, but the available evidence could not support a
+                customer-impact conclusion.
+              </p>
+              <div className="insufficient-list">
+                {insufficientItems.slice(0, 3).map((item) => (
+                  <article key={item.finding_id} className="insufficient-card">
+                    <FileSearch aria-hidden="true" />
+                    <div>
+                      <h3>
+                        <Link to={`/findings/${encodeURIComponent(item.finding_id)}`}>
+                          {item.package_name} {item.candidate_version}
+                        </Link>
+                      </h3>
+                      <p>
+                        {item.assessment ??
+                          "The analysis did not identify a supported impact scenario."}
+                      </p>
+                      <div className="badge-row">
+                        <Badge tone="insufficient">Insufficient evidence</Badge>
+                        {item.change_types.slice(0, 2).map((change) => (
+                          <Badge key={change}>{formatChangeType(change)}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <Link
+                      className="card-link"
+                      to={`/findings/${encodeURIComponent(item.finding_id)}`}
+                    >
+                      Review evidence <ArrowRight aria-hidden="true" />
+                    </Link>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </details>
+        </section>
+      )}
     </div>
   );
 }
@@ -450,11 +439,6 @@ function GlanceCard({
   );
 }
 
-function formatDisposition(value: string | null) {
-  if (!value) return "Analysis has not completed";
-  return value.replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
-}
-
 function FocusCard({ item, rank }: { item: FindingSummary; rank: number }) {
   return (
     <article className="focus-card">
@@ -472,7 +456,11 @@ function FocusCard({ item, rank }: { item: FindingSummary; rank: number }) {
       <p className="version-change">
         {item.baseline_version ?? "unknown"} <span>→</span> {item.candidate_version}
       </p>
-      <p className="plain-change">{item.change_types.map(formatChangeType).join(" · ")}</p>
+      <p className="plain-change">
+        <MarkdownText inline>
+          {item.assessment?.trim() || item.change_types.map(formatChangeType).join(" · ")}
+        </MarkdownText>
+      </p>
       <div className="focus-meta">
         <span>
           <CheckCircle2 aria-hidden="true" /> <strong>{formatPercent(item.confidence)}</strong>{" "}
@@ -508,7 +496,11 @@ function QuickScan({ items }: { items: FindingSummary[] }) {
             <p>
               {item.baseline_version ?? "unknown"} → {item.candidate_version}
             </p>
-            <small>{item.change_types.map(formatChangeType).join(" · ")}</small>
+            <small className="scan-assessment">
+              <MarkdownText inline>
+                {item.assessment?.trim() || item.change_types.map(formatChangeType).join(" · ")}
+              </MarkdownText>
+            </small>
           </div>
           <div className="scan-stat">
             <strong>{formatPercent(item.confidence)}</strong>
