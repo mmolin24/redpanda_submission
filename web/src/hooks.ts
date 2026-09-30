@@ -25,6 +25,7 @@ function sameDependencies(previous: readonly unknown[], current: readonly unknow
 export function useAsync<T>(
   loader: (signal: AbortSignal) => Promise<T>,
   deps: readonly unknown[],
+  options: { keepPreviousData?: boolean } = {},
 ): AsyncState<T> {
   const [attempt, setAttempt] = useState(0);
   const [snapshot, setSnapshot] = useState<AsyncSnapshot<T>>({
@@ -33,10 +34,7 @@ export function useAsync<T>(
     result: LOADING_RESULT,
   });
   const retry = useCallback(() => setAttempt((current) => current + 1), []);
-  const result =
-    snapshot.attempt === attempt && sameDependencies(snapshot.dependencies, deps)
-      ? snapshot.result
-      : LOADING_RESULT;
+  const isCurrent = snapshot.attempt === attempt && sameDependencies(snapshot.dependencies, deps);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -73,7 +71,12 @@ export function useAsync<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, attempt]);
 
-  return useMemo(() => ({ ...result, retry }), [result, retry]);
+  return useMemo(() => {
+    const result: AsyncResult<T> = isCurrent
+      ? snapshot.result
+      : { status: "loading", data: options.keepPreviousData ? snapshot.result.data : undefined };
+    return { ...result, retry };
+  }, [isCurrent, snapshot.result, options.keepPreviousData, retry]);
 }
 
 export function useDebouncedValue<T>(value: T, delayMs: number): T {

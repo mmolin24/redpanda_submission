@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -10,6 +11,7 @@ import {
   Clock3,
   FileSearch,
   ListFilter,
+  RefreshCw,
   Rows3,
   TableProperties,
 } from "lucide-react";
@@ -36,17 +38,37 @@ export function Dashboard() {
   });
   const [viewMode, setViewMode] = useState<ViewMode>("quick");
   const debouncedPackage = useDebouncedValue(filters.package ?? "", 300);
-  const debouncedChangeType = useDebouncedValue(filters.change_type ?? "", 300);
   const appliedFilters = {
     ...filters,
     package: debouncedPackage,
-    change_type: debouncedChangeType,
     include_insufficient: true,
   };
   const queryKey = JSON.stringify(appliedFilters);
-  const findings = useAsync((signal) => loadAllFindings(appliedFilters, signal), [queryKey]);
-  const stats = useAsync(api.stats, []);
-  const ops = useAsync(api.ops, []);
+  const findings = useAsync((signal) => loadAllFindings(appliedFilters, signal), [queryKey], {
+    keepPreviousData: true,
+  });
+  const changeTypeCatalog = useAsync(
+    (signal) => loadAllFindings({ include_insufficient: true }, signal),
+    [],
+    { keepPreviousData: true },
+  );
+  const changeTypeOptions = Array.from(
+    new Set([
+      ...(changeTypeCatalog.data?.items ?? findings.data?.items ?? []).flatMap(
+        (item) => item.change_types,
+      ),
+      ...(filters.change_type ? [filters.change_type] : []),
+    ]),
+  ).sort((a, b) => formatChangeType(a).localeCompare(formatChangeType(b)));
+  const stats = useAsync(api.stats, [], { keepPreviousData: true });
+  const ops = useAsync(api.ops, [], { keepPreviousData: true });
+  const refreshing = [findings.status, stats.status, ops.status].includes("loading");
+  const refresh = () => {
+    findings.retry();
+    changeTypeCatalog.retry();
+    stats.retry();
+    ops.retry();
+  };
 
   const items = useMemo(() => findings.data?.items ?? [], [findings.data]);
   const publishableItems = useMemo(() => items.filter((item) => item.publishable), [items]);
@@ -64,20 +86,61 @@ export function Dashboard() {
     filters.processing_priority,
     filters.min_confidence,
   ].filter(Boolean).length;
-  const summary = stats.status === "success" ? stats.data : null;
+  const summary = stats.data ?? null;
   const latestObservedRelease = summary?.latest_release ?? null;
-  const pipelineStatus =
-    ops.status === "success" ? ops.data.status : ops.status === "error" ? "degraded" : "unknown";
-  const freshness = ops.status === "success" ? ops.data.freshness : null;
-  const unresolvedFailures =
-    ops.status === "success"
-      ? (ops.data.attention?.unresolved_failures ?? ops.data.unresolved_failures ?? 0)
-      : 0;
-  const attentionDetail =
-    ops.status === "success"
-      ? (ops.data.attention?.detail ?? "Retained processing records need review.")
-      : null;
-  const releaseCount = findings.status === "success" ? releases.length : "—";
+  const pipelineStatus = ops.data?.status ?? (ops.status === "error" ? "degraded" : "unknown");
+  const freshness = ops.data?.freshness ?? null;
+  const unresolvedFailures = ops.data
+    ? (ops.data.attention?.unresolved_failures ?? ops.data.unresolved_failures ?? 0)
+    : 0;
+  const attentionDetail = ops.data
+    ? (ops.data.attention?.detail ?? "Retained processing records need review.")
+    : null;
+  const releaseCount = findings.data ? releases.length : "—";
+
+  let latestReleaseDetail: string;
+  if (latestObservedRelease) {
+    latestReleaseDetail = `${latestObservedRelease.version} · ${formatDate(latestObservedRelease.event_published_at)}`;
+  } else if (newestRelease) {
+    latestReleaseDetail = `${newestRelease.candidate_version} · ${formatDate(newestRelease.event_published_at)}`;
+  } else {
+    latestReleaseDetail = "No release event recorded";
+  }
+
+  let workspaceDescription: string;
+  if (!findings.data) {
+    workspaceDescription = "Browse monitored releases and their supporting evidence.";
+  } else if (viewMode === "quick") {
+    workspaceDescription = `${releases.length} distinct releases, expressed in plain language.`;
+  } else {
+    workspaceDescription = `${findings.data.meta.total} persisted analyses with detailed metadata.`;
+  }
+
+  const visibleItemCount = viewMode === "quick" ? releases.length : items.length;
+  let findingsContent: ReactNode;
+  if (findings.status === "error") {
+    findingsContent = <ErrorState error={findings.error} onRetry={findings.retry} />;
+  } else if (!findings.data) {
+    findingsContent = <LoadingState label="Loading findings" />;
+  } else if (visibleItemCount === 0) {
+    findingsContent = (
+      <EmptyState
+        action={
+          <button
+            className="button"
+            type="button"
+            onClick={() => setFilters({ sort_by: "event_time", sort_direction: "desc" })}
+          >
+            Clear filters
+          </button>
+        }
+      />
+    );
+  } else if (viewMode === "quick") {
+    findingsContent = <QuickScan items={releases} />;
+  } else {
+    findingsContent = <FullTable items={items} filters={filters} setFilters={setFilters} />;
+  }
 
   return (
     <div className="page dashboard-page">
@@ -105,12 +168,18 @@ export function Dashboard() {
             </span>
           </p>
         </div>
-        <div
-          className={`system-state ${pipelineStatus}`}
-          role={pipelineStatus === "degraded" ? "alert" : "status"}
-        >
-          <span className="status-dot" aria-hidden="true" />
-          Dashboard data {pipelineStatus}
+        <div className="dashboard-actions">
+          <div
+            className={`system-state ${pipelineStatus}`}
+            role={pipelineStatus === "degraded" ? "alert" : "status"}
+          >
+            <span className="status-dot" aria-hidden="true" />
+            Dashboard data {pipelineStatus}
+          </div>
+          <button type="button" className="refresh-button" onClick={refresh} disabled={refreshing}>
+            <RefreshCw aria-hidden="true" />
+            {refreshing ? "Refreshing…" : "Refresh data"}
+          </button>
         </div>
       </section>
 
@@ -150,13 +219,7 @@ export function Dashboard() {
           icon={<Clock3 aria-hidden="true" />}
           label="Most recent event"
           value={latestObservedRelease?.package_name ?? newestRelease?.package_name ?? "—"}
-          detail={
-            latestObservedRelease
-              ? `${latestObservedRelease.version} · ${formatDate(latestObservedRelease.event_published_at)}`
-              : newestRelease
-                ? `${newestRelease.candidate_version} · ${formatDate(newestRelease.event_published_at)}`
-                : "No release event recorded"
-          }
+          detail={latestReleaseDetail}
         />
       </section>
 
@@ -178,11 +241,6 @@ export function Dashboard() {
             </span>
           </div>
         </section>
-      )}
-
-      {findings.status === "loading" && !findings.data && <LoadingState label="Loading findings" />}
-      {findings.status === "error" && (
-        <ErrorState error={findings.error} onRetry={findings.retry} />
       )}
 
       {findings.data && insufficientItems.length > 0 && (
@@ -246,61 +304,57 @@ export function Dashboard() {
         </section>
       )}
 
-      {findings.data && (
-        <section
-          className="findings-workspace"
-          aria-labelledby="findings-title"
-          aria-busy={findings.status === "loading"}
-        >
-          <div className="workspace-heading">
-            <div>
-              <p className="eyebrow">Explore the evidence</p>
-              <h2 id="findings-title">
-                {viewMode === "quick" ? "Release changes" : "All analyses"}
-              </h2>
-              <p>
-                {viewMode === "quick"
-                  ? `${releases.length} distinct releases, expressed in plain language.`
-                  : `${findings.data.meta.total} persisted analyses with detailed metadata.`}
-              </p>
-              {findings.status === "loading" && (
-                <p className="workspace-refresh" role="status" aria-live="polite">
-                  Refreshing findings…
-                </p>
-              )}
-            </div>
-            <div className="workspace-controls">
-              <div className="view-switch" aria-label="Finding detail level">
-                <button
-                  type="button"
-                  aria-pressed={viewMode === "quick"}
-                  onClick={() => setViewMode("quick")}
-                >
-                  <Rows3 aria-hidden="true" /> Quick scan
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={viewMode === "full"}
-                  onClick={() => setViewMode("full")}
-                >
-                  <TableProperties aria-hidden="true" /> Full table
-                </button>
-              </div>
+      <section
+        className="findings-workspace"
+        aria-labelledby="findings-title"
+        aria-busy={findings.status === "loading"}
+      >
+        <div className="workspace-heading">
+          <div>
+            <p className="eyebrow">Explore the evidence</p>
+            <h2 id="findings-title">{viewMode === "quick" ? "Release changes" : "All analyses"}</h2>
+            <p>{workspaceDescription}</p>
+            <p className="workspace-refresh" role="status" aria-live="polite">
+              {findings.status === "loading" && findings.data
+                ? "Refreshing findings… Showing previous results."
+                : ""}
+            </p>
+          </div>
+          <div className="workspace-controls">
+            <div className="view-switch" aria-label="Finding detail level">
+              <button
+                type="button"
+                aria-pressed={viewMode === "quick"}
+                onClick={() => setViewMode("quick")}
+              >
+                <Rows3 aria-hidden="true" /> Quick scan
+              </button>
+              <button
+                type="button"
+                aria-pressed={viewMode === "full"}
+                onClick={() => setViewMode("full")}
+              >
+                <TableProperties aria-hidden="true" /> Full table
+              </button>
             </div>
           </div>
+        </div>
 
-          <details className="filter-disclosure">
-            <summary>
-              <span>
-                <ListFilter aria-hidden="true" /> Filters{" "}
-                {activeFilterCount > 0 && <strong>{activeFilterCount}</strong>}
-              </span>
-              <ChevronDown className="disclosure-chevron" aria-hidden="true" />
-            </summary>
-            <div className="filter-content">
-              <div className="filter-actions">
-                <p>Narrow both the quick scan and full analysis table.</p>
-                {releases.length > 0 && activeFilterCount > 0 && (
+        <details className="filter-disclosure">
+          <summary>
+            <span>
+              <ListFilter aria-hidden="true" /> Filters{" "}
+              {activeFilterCount > 0 && <strong>{activeFilterCount}</strong>}
+            </span>
+            <ChevronDown className="disclosure-chevron" aria-hidden="true" />
+          </summary>
+          <div className="filter-content">
+            <div className="filter-actions">
+              <p>Narrow both the quick scan and full analysis table.</p>
+              {((viewMode === "quick" ? releases.length : items.length) > 0 ||
+                findings.status === "error" ||
+                !findings.data) &&
+                activeFilterCount > 0 && (
                   <button
                     type="button"
                     className="text-button"
@@ -309,77 +363,64 @@ export function Dashboard() {
                     Clear filters
                   </button>
                 )}
-              </div>
-              <div className="filter-grid">
-                <label>
-                  Package
-                  <input
-                    value={filters.package ?? ""}
-                    onChange={(event) => setFilters({ ...filters, package: event.target.value })}
-                    placeholder="requests"
-                  />
-                </label>
-                <label>
-                  Change type
-                  <input
-                    value={filters.change_type ?? ""}
-                    onChange={(event) =>
-                      setFilters({ ...filters, change_type: event.target.value })
-                    }
-                    placeholder="dependency"
-                  />
-                </label>
-                <label>
-                  Priority
-                  <select
-                    value={filters.processing_priority ?? ""}
-                    onChange={(event) =>
-                      setFilters({ ...filters, processing_priority: event.target.value })
-                    }
-                  >
-                    <option value="">All priorities</option>
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
-                  </select>
-                </label>
-                <label>
-                  Minimum confidence
-                  <input
-                    type="number"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={filters.min_confidence ?? ""}
-                    onChange={(event) =>
-                      setFilters({ ...filters, min_confidence: event.target.value })
-                    }
-                    placeholder="0.65"
-                  />
-                </label>
-              </div>
             </div>
-          </details>
-
-          {(viewMode === "quick" ? releases.length : items.length) === 0 ? (
-            <EmptyState
-              action={
-                <button
-                  className="button"
-                  type="button"
-                  onClick={() => setFilters({ sort_by: "event_time", sort_direction: "desc" })}
+            <div className="filter-grid">
+              <label>
+                Package
+                <input
+                  value={filters.package ?? ""}
+                  onChange={(event) => setFilters({ ...filters, package: event.target.value })}
+                  placeholder="requests"
+                />
+              </label>
+              <label>
+                Change type
+                <select
+                  value={filters.change_type ?? ""}
+                  onChange={(event) => setFilters({ ...filters, change_type: event.target.value })}
                 >
-                  Clear filters
-                </button>
-              }
-            />
-          ) : viewMode === "quick" ? (
-            <QuickScan items={releases} />
-          ) : (
-            <FullTable items={items} filters={filters} setFilters={setFilters} />
-          )}
-        </section>
-      )}
+                  <option value="">All change types</option>
+                  {changeTypeOptions.map((type) => (
+                    <option key={type} value={type}>
+                      {formatChangeType(type)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Priority
+                <select
+                  value={filters.processing_priority ?? ""}
+                  onChange={(event) =>
+                    setFilters({ ...filters, processing_priority: event.target.value })
+                  }
+                >
+                  <option value="">All priorities</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+              <label>
+                Minimum confidence
+                <input
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={filters.min_confidence ?? ""}
+                  onChange={(event) =>
+                    setFilters({ ...filters, min_confidence: event.target.value })
+                  }
+                  placeholder="0.65"
+                />
+              </label>
+            </div>
+          </div>
+        </details>
+
+        {findingsContent}
+      </section>
     </div>
   );
 }
@@ -418,14 +459,16 @@ function FocusCard({ item, rank }: { item: FindingSummary; rank: number }) {
   return (
     <article className="focus-card">
       <div className="focus-card-top">
-        <span className="focus-rank">0{rank}</span>
+        <div className="focus-card-title">
+          <span className="focus-rank">0{rank}</span>
+          <h3>
+            <Link to={`/findings/${encodeURIComponent(item.finding_id)}`}>{item.package_name}</Link>
+          </h3>
+        </div>
         <Badge tone={item.processing_priority ?? "neutral"}>
           {item.processing_priority ?? "monitored"}
         </Badge>
       </div>
-      <h3>
-        <Link to={`/findings/${encodeURIComponent(item.finding_id)}`}>{item.package_name}</Link>
-      </h3>
       <p className="version-change">
         {item.baseline_version ?? "unknown"} <span>→</span> {item.candidate_version}
       </p>
@@ -475,7 +518,7 @@ function QuickScan({ items }: { items: FindingSummary[] }) {
             <time dateTime={item.event_published_at ?? undefined}>
               {formatDate(item.event_published_at)}
             </time>
-            <span>{formatPercent(item.confidence)} analysis confidence</span>
+            <span>Release event</span>
           </div>
           <Link
             className="icon-link"
@@ -580,21 +623,28 @@ function SortableHeader({
   const active = filters.sort_by === sortKey;
   const direction = active ? (filters.sort_direction ?? "desc") : undefined;
   const nextDirection = active && direction === "desc" ? "asc" : "desc";
+  let ariaSort: "ascending" | "descending" | "none";
+  let sortIcon: ReactNode = null;
+
+  if (!active) {
+    ariaSort = "none";
+  } else if (direction === "asc") {
+    ariaSort = "ascending";
+    sortIcon = <ArrowUp aria-hidden="true" />;
+  } else {
+    ariaSort = "descending";
+    sortIcon = <ArrowDown aria-hidden="true" />;
+  }
+
   return (
-    <th aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}>
+    <th aria-sort={ariaSort}>
       <button
         type="button"
         className="sort-button"
         onClick={() => setFilters({ ...filters, sort_by: sortKey, sort_direction: nextDirection })}
       >
         {label}
-        {active ? (
-          direction === "asc" ? (
-            <ArrowUp aria-hidden="true" />
-          ) : (
-            <ArrowDown aria-hidden="true" />
-          )
-        ) : null}
+        {sortIcon}
       </button>
     </th>
   );

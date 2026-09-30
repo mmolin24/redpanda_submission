@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Dashboard } from "../pages/Dashboard";
 import { Finding } from "../pages/Finding";
 import { NotFound } from "../pages/RouteFallback";
 import { App } from "../App";
+import { JsonFacts } from "../components";
 import {
   finding,
   findingDetail,
@@ -98,6 +99,12 @@ describe("findings dashboard", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL(requestUrl(input), "http://localhost");
       if (url.pathname === "/api/findings") {
+        if (!url.searchParams.has("sort_by")) {
+          return new Response(JSON.stringify(findingPage), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
         findingsAttempts += 1;
         const body = findingsAttempts === 1 ? { detail: "database unavailable" } : findingPage;
         return new Response(JSON.stringify(body), {
@@ -170,6 +177,88 @@ describe("findings dashboard", () => {
 
     expect(await screen.findByText("Dashboard data degraded")).toHaveAttribute("role", "alert");
     expect(screen.getByText("Data recency unavailable")).toBeInTheDocument();
+  });
+
+  it("preserves filter focus and previous results during a pending request and after failure", async () => {
+    const fetch = mockFetch({
+      "/api/findings?": findingPage,
+      "/api/stats": stats,
+      "/api/ops/summary": { status: "healthy", freshness: {} },
+    });
+    const initialFetch = fetch.getMockImplementation()!;
+    let finishRequest!: (response: Response) => void;
+    fetch.mockImplementation((input, init) => {
+      if (requestUrl(input).includes("package=missing")) {
+        return new Promise<Response>((resolve) => {
+          finishRequest = resolve;
+        });
+      }
+      return initialFetch(input, init);
+    });
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+    await screen.findAllByRole("link", { name: "requests" });
+    fireEvent.click(screen.getByText("Filters"));
+    const input = screen.getByRole("textbox", { name: "Package" });
+    const disclosure = input.closest("details");
+    input.focus();
+    fireEvent.change(input, { target: { value: "missing" } });
+    await screen.findByText("Refreshing findings… Showing previous results.");
+    expect(input).toHaveFocus();
+    expect(disclosure).toHaveAttribute("open");
+    expect(screen.getAllByRole("link", { name: "requests" })).toHaveLength(2);
+    await act(async () =>
+      finishRequest(new Response(JSON.stringify({ detail: "Unavailable" }), { status: 503 })),
+    );
+    await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("textbox", { name: "Package" })).toBe(input);
+    expect(input).toHaveFocus();
+    expect(disclosure).toHaveAttribute("open");
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(await screen.findAllByRole("link", { name: "requests" })).toHaveLength(2);
+  });
+
+  it("refreshes findings and both summaries while preserving the selected view and filters", async () => {
+    const fetch = mockFetch({
+      "/api/findings?": findingPage,
+      "/api/stats": stats,
+      "/api/ops/summary": { status: "healthy", freshness: {} },
+    });
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+    await screen.findAllByRole("link", { name: "requests" });
+    fireEvent.click(screen.getByRole("button", { name: "Full table" }));
+    fireEvent.click(screen.getByText("Filters"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Priority" }), {
+      target: { value: "high" },
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh data" })).toBeEnabled());
+    fetch.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh data" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh data" })).toBeEnabled());
+    const urls = fetch.mock.calls.map(([input]) => requestUrl(input));
+    expect(urls).toHaveLength(4);
+    expect(urls).toContain("/api/stats");
+    expect(urls).toContain("/api/ops/summary");
+    const findingQueries = urls
+      .filter((url) => url.startsWith("/api/findings?"))
+      .map((url) => new URL(url, "http://localhost").searchParams);
+    expect(findingQueries).toHaveLength(2);
+    expect(
+      findingQueries.filter((query) => query.get("processing_priority") === "high"),
+    ).toHaveLength(1);
+    expect(findingQueries.filter((query) => !query.has("processing_priority"))).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Full table" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: "Priority" })).toHaveValue("high");
   });
 
   it("keeps filters available and offers one recovery action when no results match", async () => {
@@ -322,7 +411,11 @@ describe("findings dashboard", () => {
     }
     expect(within(releaseCard).getByText("0", { selector: "strong" })).toBeInTheDocument();
     expect(screen.getByText("packaging", { selector: "strong" })).toBeInTheDocument();
-    expect(screen.getByText("26.2 · Apr 24, 2026, 4:15 PM")).toBeInTheDocument();
+    const releaseDate = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date("2026-04-24T20:15:23Z"));
+    expect(screen.getByText(`26.2 · ${releaseDate}`)).toBeInTheDocument();
     expect(screen.getByText("packaging 26.2 was monitored")).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -382,6 +475,12 @@ describe("findings dashboard", () => {
     expect(screen.getByRole("link", { name: "cffi" })).toBeInTheDocument();
     expect(screen.getByText("2 persisted analyses with detailed metadata.")).toBeInTheDocument();
   });
+});
+
+it("labels empty evidence objects instead of rendering blank fact rows", () => {
+  render(<JsonFacts value={{ dependency_diff: {} }} />);
+  expect(screen.getByText("dependency diff")).toBeInTheDocument();
+  expect(screen.getByText("None recorded.")).toBeInTheDocument();
 });
 
 describe("application shell", () => {
