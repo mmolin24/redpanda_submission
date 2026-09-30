@@ -84,16 +84,38 @@ export function JsonFacts({ value }: { value: unknown }) {
       <p className="muted">None recorded.</p>
     );
   }
+  if (!Object.keys(value).length) return <p className="muted">None recorded.</p>;
   return (
-    <dl className="facts">
-      {Object.entries(value as Record<string, unknown>).map(([key, item]) => (
-        <div key={key}>
-          <dt>{key.replaceAll("_", " ")}</dt>
-          <dd>
-            <JsonFacts value={item} />
-          </dd>
-        </div>
-      ))}
-    </dl>
+    <div className="json-object">
+      {Object.entries(value as Record<string, unknown>).map(([key, item]) => {
+        const label = key.replaceAll("_", " ");
+        if (item !== null && typeof item === "object") {
+          const count = Array.isArray(item) ? item.length : Object.keys(item).length;
+          return (
+            <details className="fact-group" key={key}>
+              <summary>
+                <span>{label}</span>
+                <small>
+                  {count} {Array.isArray(item) ? "items" : "fields"}
+                </small>
+              </summary>
+              <div className="fact-group-content">
+                <JsonFacts value={item} />
+              </div>
+            </details>
+          );
+        }
+        return (
+          <dl className="facts" key={key}>
+            <div>
+              <dt>{label}</dt>
+              <dd>
+                <JsonFacts value={item} />
+              </dd>
+            </div>
+          </dl>
+        );
+      })}
+    </div>
   );
 }

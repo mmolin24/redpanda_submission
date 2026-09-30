@@ -58,11 +58,11 @@ export function Finding() {
     summaryLimitations.length ? summaryLimitations : stringItems(finding.limitations)
   ).filter((item) => !isLegacyCustomerContext(item));
   const evidence = finding.evidence_bundle;
-  const computedEvidence = asRecord(evidence.computed);
+  const computedEvidence = evidence.computed;
   const factCount = arrayLength(evidence.facts);
   const sourceCount = arrayLength(evidence.provenance);
   const collectionStatus =
-    textValue(evidence.collection_status) ?? (finding.evidence_partial ? "partial" : "complete");
+    textValue(evidence.collection_status) ?? (finding.evidence_partial ? "partial" : undefined);
   const primaryScenario = consumerScenarios[0];
   const primaryClaim = claims[0];
   const primaryScenarioCondition =
@@ -249,20 +249,44 @@ export function Finding() {
             title="Evidence"
             description="Collected facts and deterministic differences used by the analysis."
           >
-            <div className="evidence-overview">
-              <EvidenceMetric label="Collection" value={humanize(collectionStatus)} />
-              <EvidenceMetric label="Evidence facts" value={String(factCount)} />
-              <EvidenceMetric label="Source records" value={String(sourceCount)} />
-            </div>
-            {computedEvidence && (
-              <div className="evidence-highlights">
-                <h3>Detected differences</h3>
+            <p className="evidence-comparison">
+              {finding.baseline_version
+                ? `${finding.package_name} ${finding.baseline_version} → ${finding.candidate_version}`
+                : `${finding.package_name} ${finding.candidate_version}`}
+            </p>
+            <EvidenceHighlights evidence={evidence} claims={claims} summary={customerSummary} />
+            {presentEvidence(computedEvidence) !== undefined && (
+              <Disclosure label="View computed differences">
                 <JsonFacts value={computedEvidence} />
-              </div>
+              </Disclosure>
             )}
-            <Disclosure label="View complete evidence record">
-              <JsonFacts value={finding.evidence_bundle} />
-            </Disclosure>
+            {(collectionStatus || factCount > 0 || sourceCount > 0) && (
+              <Disclosure label="View collection details">
+                <p>
+                  {[
+                    collectionStatus && `Collection: ${humanize(collectionStatus)}`,
+                    factCount > 0 && `${factCount} facts`,
+                    sourceCount > 0 && `${sourceCount} source records`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+                {collectionStatus && (
+                  <p className="muted">
+                    Collection status describes the configured collection scope, not exhaustive
+                    coverage.
+                  </p>
+                )}
+                {presentEvidence(evidence.provenance) !== undefined && (
+                  <JsonFacts value={evidence.provenance} />
+                )}
+              </Disclosure>
+            )}
+            {Object.keys(evidence).length > 0 && (
+              <Disclosure label="View complete evidence record">
+                <JsonFacts value={evidence} />
+              </Disclosure>
+            )}
             <Disclosure label="View source event and model metadata">
               <JsonFacts value={auditMetadata(finding)} />
             </Disclosure>
@@ -364,12 +388,135 @@ function TextList({ items, empty }: { items: string[]; empty: string }) {
   );
 }
 
-function EvidenceMetric({ label, value }: { label: string; value: string }) {
+// Keep false and zero: they are recorded facts, unlike empty containers.
+function presentEvidence(value: unknown): unknown {
+  if (value == null || (typeof value === "string" && !value.trim())) return undefined;
+  if (Array.isArray(value)) {
+    const items = value.map(presentEvidence).filter((item) => item !== undefined);
+    return items.length ? items : undefined;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value)
+      .map(([key, item]) => [key, presentEvidence(item)] as const)
+      .filter(([, item]) => item !== undefined);
+    return entries.length ? Object.fromEntries(entries) : undefined;
+  }
+  return value;
+}
+
+function EvidenceHighlights({
+  evidence,
+  claims,
+  summary,
+}: {
+  evidence: JsonObject;
+  claims: UnknownRecord[];
+  summary: UnknownRecord | undefined;
+}) {
+  const references = new Set([
+    ...claims.flatMap((claim) => stringItems(claim.evidence_ids)),
+    ...stringItems(summary?.evidence_ids),
+  ]);
+  const facts = recordItems(evidence.facts);
+  const byId = new Map(facts.map((fact) => [textValue(fact.evidence_id), fact.value]));
+  const fields = new Set(
+    facts
+      .filter((fact) => references.has(String(fact.evidence_id)))
+      .map((fact) => String(fact.evidence_id))
+      .filter((id) => /^(baseline|candidate)\./.test(id))
+      .map((id) => id.replace(/^(baseline|candidate)\./, "")),
+  );
+  const hunks = recordItems(asRecord(evidence.context)?.code_hunks).filter(
+    (hunk) => references.has(String(hunk.evidence_id)) && textValue(hunk.diff),
+  );
+  const labels: Record<string, string> = {
+    requires_dist: "Dependency requirement",
+    requires_python: "Python requirement",
+    yanked: "Release availability",
+  };
+  const computedFields = new Set(
+    Array.from(references)
+      .map((id) => /^computed\.(.+)\.(?:before|after)(?:\.\d+)?$/.exec(id)?.[1])
+      .filter(isPresent),
+  );
+  const computedLabels: Record<string, string> = {
+    requires_python_diff: "Python requirement",
+    requires_dist_diff: "Dependency requirement",
+    yank_diff: "Release availability",
+  };
+  const comparisons = [
+    ...Array.from(fields, (field) => ({
+      key: field,
+      label:
+        labels[field.split(".")[1]] ?? humanize(field.replace(/\.\d+$/, "").replaceAll(".", " ")),
+      before: byId.get(`baseline.${field}`),
+      after: byId.get(`candidate.${field}`),
+    })),
+    ...Array.from(computedFields, (field) => {
+      const diff = asRecord(
+        field.split(".").reduce<unknown>((value, key) => asRecord(value)?.[key], evidence.computed),
+      );
+      return {
+        key: `computed.${field}`,
+        label: computedLabels[field.split(".")[0]] ?? humanize(field.replaceAll(".", " ")),
+        before: diff?.before,
+        after: diff?.after,
+      };
+    }),
+  ];
   return (
-    <article>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </article>
+    <div className="evidence-summary">
+      {comparisons.map(({ key, label, before: baseline, after: candidate }) => {
+        if (baseline === undefined && candidate === undefined) return null;
+        const display = (value: unknown) =>
+          typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        return (
+          <article className="evidence-highlights" key={key}>
+            <h3>{label}</h3>
+            <dl className="evidence-values">
+              {baseline !== undefined && (
+                <div>
+                  <dt>Before</dt>
+                  <dd>
+                    <code>{display(baseline)}</code>
+                  </dd>
+                </div>
+              )}
+              {candidate !== undefined && (
+                <div>
+                  <dt>After</dt>
+                  <dd>
+                    <code>{display(candidate)}</code>
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </article>
+        );
+      })}
+      {hunks.map((hunk) => {
+        const changedLines = String(hunk.diff)
+          .split("\n")
+          .filter((line) => /^[+-](?![+-])/.test(line));
+        const additions = changedLines.filter((line) => line.startsWith("+")).length;
+        const removals = changedLines.length - additions;
+        const compact = changedLines.length <= 8;
+        return (
+          <article className="evidence-highlights" key={String(hunk.evidence_id)}>
+            <h3>
+              Supporting archive diff · <code>{textValue(hunk.path) ?? "Cited source"}</code>
+            </h3>
+            <p className="muted">
+              {additions} added lines · {removals} removed lines
+            </p>
+            {compact && <pre className="evidence-diff">{changedLines.join("\n")}</pre>}
+            <Disclosure label={compact ? "View diff with context" : "View full diff with context"}>
+              <pre className="evidence-diff evidence-diff-expanded">{String(hunk.diff)}</pre>
+            </Disclosure>
+          </article>
+        );
+      })}
+    </div>
   );
 }
 
