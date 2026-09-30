@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { useMemo } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import {
   Activity,
   ArrowDown,
@@ -14,7 +14,7 @@ import {
   Rows3,
   TableProperties,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { api, type FindingFilters } from "../api";
 import {
   Badge,
@@ -25,41 +25,22 @@ import {
   LoadingState,
 } from "../components";
 import { useAsync, useDebouncedValue } from "../hooks";
+import { useDashboardState } from "../useDashboardState";
 import { formatChangeType } from "../presentation";
 import { MarkdownText } from "../MarkdownText";
 import type { FindingPage, FindingSummary } from "../types";
 
-type ViewMode = "quick" | "full";
-
 export function Dashboard() {
-  const [filters, setFilters] = useState<FindingFilters>({
-    sort_by: "event_time",
-    sort_direction: "desc",
-  });
-  const [viewMode, setViewMode] = useState<ViewMode>("quick");
-  const [confidencePercent, setConfidencePercent] = useState("");
-  const confidenceError =
-    confidencePercent !== "" &&
-    (!Number.isFinite(Number(confidencePercent)) ||
-      Number(confidencePercent) < 0 ||
-      Number(confidencePercent) > 100)
-      ? "Enter a percentage from 0 to 100."
-      : null;
-  const updateConfidence = (value: string) => {
-    setConfidencePercent(value);
-    const percentage = Number(value);
-    if (value !== "" && (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)) {
-      return;
-    }
-    setFilters((current) => ({
-      ...current,
-      min_confidence: value === "" ? undefined : String(percentage / 100),
-    }));
-  };
-  const clearFilters = () => {
-    setConfidencePercent("");
-    setFilters({ sort_by: "event_time", sort_direction: "desc" });
-  };
+  const {
+    filters,
+    setFilters,
+    viewMode,
+    setViewMode,
+    confidencePercent,
+    confidenceError,
+    updateConfidence,
+    clearFilters,
+  } = useDashboardState();
   const debouncedPackage = useDebouncedValue(filters.package ?? "", 300);
   const appliedFilters = {
     ...filters,
@@ -109,6 +90,9 @@ export function Dashboard() {
     filters.processing_priority,
     confidencePercent,
   ].filter(Boolean).length;
+  const advancedFilterCount = [filters.processing_priority, confidencePercent].filter(
+    Boolean,
+  ).length;
   const summary = stats.data ?? null;
   const latestObservedRelease = summary?.latest_release ?? null;
   const pipelineStatus = ops.data?.status ?? (ops.status === "error" ? "degraded" : "unknown");
@@ -161,25 +145,42 @@ export function Dashboard() {
         <div>
           <p className="eyebrow">Monitored package landscape</p>
           <h1>Package changes that deserve a look</h1>
-          <p>
-            Start with recent monitored releases, then open any finding for the complete evidence
-            and analysis trace.
-          </p>
-          <p className="page-context">
-            Last ingestion {formatDate(summary?.last_ingestion_at)} · Estimated model cost{" "}
-            {summary ? `$${summary.estimated_cost_usd.toFixed(4)}` : "—"}
-          </p>
-          <p className="source-context">
+          <p>Review recent releases, then open a finding for its evidence and analysis trace.</p>
+          <div className="source-context">
             <strong>
               {freshness ? sourceModeLabel(freshness.source_mode) : "Data recency unavailable"}
             </strong>
-            <span>
-              {freshness?.detail ??
-                (ops.status === "loading"
-                  ? "Loading source context."
-                  : "The operational summary could not be loaded.")}
-            </span>
-          </p>
+            <details className="dashboard-data">
+              <summary>
+                Data details <ChevronDown className="disclosure-chevron" aria-hidden="true" />
+              </summary>
+              <p>
+                {freshness?.detail ??
+                  (ops.status === "loading"
+                    ? "Loading source context."
+                    : "The operational summary could not be loaded.")}
+              </p>
+              <dl>
+                <div>
+                  <dt>Last ingestion</dt>
+                  <dd>{formatDate(summary?.last_ingestion_at)}</dd>
+                </div>
+                <div>
+                  <dt>Estimated model cost</dt>
+                  <dd>{summary ? `$${summary.estimated_cost_usd.toFixed(4)}` : "—"}</dd>
+                </div>
+                <div>
+                  <dt>Most recent event</dt>
+                  <dd>
+                    <strong>
+                      {latestObservedRelease?.package_name ?? newestRelease?.package_name ?? "—"}
+                    </strong>
+                    <span>{latestReleaseDetail}</span>
+                  </dd>
+                </div>
+              </dl>
+            </details>
+          </div>
         </div>
         <div className="dashboard-actions">
           <div
@@ -214,12 +215,6 @@ export function Dashboard() {
           label="Complete evidence"
           value={releases.length ? formatPercent(completeCount / releases.length) : "—"}
           detail="No partial evidence flags"
-        />
-        <GlanceCard
-          icon={<Clock3 aria-hidden="true" />}
-          label="Most recent event"
-          value={latestObservedRelease?.package_name ?? newestRelease?.package_name ?? "—"}
-          detail={latestReleaseDetail}
         />
       </section>
 
@@ -277,62 +272,68 @@ export function Dashboard() {
           </div>
         </div>
 
-        <details className="filter-disclosure">
+        <div className="primary-filters filter-grid">
+          <label>
+            Package
+            <input
+              value={filters.package ?? ""}
+              onChange={(event) => setFilters({ ...filters, package: event.target.value })}
+              placeholder="Search packages"
+            />
+          </label>
+          <label>
+            Change type
+            <span className="select-control">
+              <select
+                value={filters.change_type ?? ""}
+                onChange={(event) => setFilters({ ...filters, change_type: event.target.value })}
+              >
+                <option value="">All change types</option>
+                {changeTypeOptions.map((type) => (
+                  <option key={type} value={type}>
+                    {formatChangeType(type)}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown aria-hidden="true" />
+            </span>
+          </label>
+          <div className="filter-reset">
+            {(visibleItemCount > 0 || findings.status === "error" || !findings.data) &&
+              activeFilterCount > 0 && (
+                <button type="button" className="text-button" onClick={clearFilters}>
+                  Clear filters
+                </button>
+              )}
+          </div>
+        </div>
+
+        <details className="filter-disclosure" open={advancedFilterCount > 0 || undefined}>
           <summary>
             <span>
-              <ListFilter aria-hidden="true" /> Filters{" "}
-              {activeFilterCount > 0 && <strong>{activeFilterCount}</strong>}
+              <ListFilter aria-hidden="true" /> Advanced filters{" "}
+              {advancedFilterCount > 0 && <strong>{advancedFilterCount}</strong>}
             </span>
             <ChevronDown className="disclosure-chevron" aria-hidden="true" />
           </summary>
           <div className="filter-content">
-            <div className="filter-actions">
-              <p>Narrow both the quick scan and full analysis table.</p>
-              {((viewMode === "quick" ? releases.length : items.length) > 0 ||
-                findings.status === "error" ||
-                !findings.data) &&
-                activeFilterCount > 0 && (
-                  <button type="button" className="text-button" onClick={clearFilters}>
-                    Clear filters
-                  </button>
-                )}
-            </div>
             <div className="filter-grid">
               <label>
-                Package
-                <input
-                  value={filters.package ?? ""}
-                  onChange={(event) => setFilters({ ...filters, package: event.target.value })}
-                  placeholder="requests"
-                />
-              </label>
-              <label>
-                Change type
-                <select
-                  value={filters.change_type ?? ""}
-                  onChange={(event) => setFilters({ ...filters, change_type: event.target.value })}
-                >
-                  <option value="">All change types</option>
-                  {changeTypeOptions.map((type) => (
-                    <option key={type} value={type}>
-                      {formatChangeType(type)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
                 Priority
-                <select
-                  value={filters.processing_priority ?? ""}
-                  onChange={(event) =>
-                    setFilters({ ...filters, processing_priority: event.target.value })
-                  }
-                >
-                  <option value="">All priorities</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
+                <span className="select-control">
+                  <select
+                    value={filters.processing_priority ?? ""}
+                    onChange={(event) =>
+                      setFilters({ ...filters, processing_priority: event.target.value })
+                    }
+                  >
+                    <option value="">All priorities</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                  <ChevronDown aria-hidden="true" />
+                </span>
               </label>
               <div className="confidence-field">
                 <label htmlFor="minimum-confidence">Minimum confidence (%)</label>
@@ -382,9 +383,9 @@ export function Dashboard() {
                     <FileSearch aria-hidden="true" />
                     <div>
                       <h3>
-                        <Link to={`/findings/${encodeURIComponent(item.finding_id)}`}>
+                        <FindingLink to={`/findings/${encodeURIComponent(item.finding_id)}`}>
                           {item.package_name} {item.candidate_version}
-                        </Link>
+                        </FindingLink>
                       </h3>
                       <p>
                         {item.assessment ??
@@ -397,12 +398,12 @@ export function Dashboard() {
                         ))}
                       </div>
                     </div>
-                    <Link
+                    <FindingLink
                       className="card-link"
                       to={`/findings/${encodeURIComponent(item.finding_id)}`}
                     >
                       Review evidence <ArrowRight aria-hidden="true" />
-                    </Link>
+                    </FindingLink>
                   </article>
                 ))}
               </div>
@@ -412,6 +413,11 @@ export function Dashboard() {
       )}
     </div>
   );
+}
+
+function FindingLink(props: ComponentProps<typeof Link>) {
+  const { search } = useLocation();
+  return <Link {...props} state={{ dashboardSearch: search }} />;
 }
 
 function GlanceCard({
@@ -430,10 +436,12 @@ function GlanceCard({
   return (
     <article className={`glance-card glance-${tone}`}>
       <div className="glance-icon">{icon}</div>
-      <div>
-        <span>{label}</span>
+      <div className="glance-copy">
+        <div>
+          <span>{label}</span>
+          <small>{detail}</small>
+        </div>
         <strong>{value}</strong>
-        <small>{detail}</small>
       </div>
     </article>
   );
@@ -446,7 +454,9 @@ function FocusCard({ item, rank }: { item: FindingSummary; rank: number }) {
         <div className="focus-card-title">
           <span className="focus-rank">0{rank}</span>
           <h3>
-            <Link to={`/findings/${encodeURIComponent(item.finding_id)}`}>{item.package_name}</Link>
+            <FindingLink to={`/findings/${encodeURIComponent(item.finding_id)}`}>
+              {item.package_name}
+            </FindingLink>
           </h3>
         </div>
         <Badge tone={item.processing_priority ?? "neutral"}>
@@ -470,9 +480,9 @@ function FocusCard({ item, rank }: { item: FindingSummary; rank: number }) {
           <Clock3 aria-hidden="true" /> {formatDate(item.event_published_at)}
         </time>
       </div>
-      <Link className="card-link" to={`/findings/${encodeURIComponent(item.finding_id)}`}>
+      <FindingLink className="card-link" to={`/findings/${encodeURIComponent(item.finding_id)}`}>
         Review evidence <ArrowRight aria-hidden="true" />
-      </Link>
+      </FindingLink>
     </article>
   );
 }
@@ -489,9 +499,9 @@ function QuickScan({ items }: { items: FindingSummary[] }) {
           </div>
           <div className="scan-change">
             <h3>
-              <Link to={`/findings/${encodeURIComponent(item.finding_id)}`}>
+              <FindingLink to={`/findings/${encodeURIComponent(item.finding_id)}`}>
                 {item.package_name}
-              </Link>
+              </FindingLink>
             </h3>
             <p>
               {item.baseline_version ?? "unknown"} → {item.candidate_version}
@@ -512,13 +522,13 @@ function QuickScan({ items }: { items: FindingSummary[] }) {
             </time>
             <span>Release event</span>
           </div>
-          <Link
+          <FindingLink
             className="icon-link"
             aria-label={`Open ${item.package_name} ${item.candidate_version} finding`}
             to={`/findings/${encodeURIComponent(item.finding_id)}`}
           >
             <ArrowRight aria-hidden="true" />
-          </Link>
+          </FindingLink>
         </article>
       ))}
     </div>
@@ -557,12 +567,12 @@ function FullTable({
           {items.map((item) => (
             <tr key={item.finding_id}>
               <td>
-                <Link
+                <FindingLink
                   className="package-link"
                   to={`/findings/${encodeURIComponent(item.finding_id)}`}
                 >
                   {item.package_name}
-                </Link>
+                </FindingLink>
                 <small>
                   {item.baseline_version ?? "unknown"} → {item.candidate_version}
                 </small>
@@ -585,13 +595,13 @@ function FullTable({
                 <small>Analyzed {formatDate(item.published_at)}</small>
               </td>
               <td>
-                <Link
+                <FindingLink
                   className="icon-link"
                   aria-label={`Open ${item.package_name} finding`}
                   to={`/findings/${encodeURIComponent(item.finding_id)}`}
                 >
                   <ArrowRight aria-hidden="true" />
-                </Link>
+                </FindingLink>
               </td>
             </tr>
           ))}
