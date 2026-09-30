@@ -152,27 +152,41 @@ class MetadataEvidenceBuilder:
         candidate_info = compact_metadata(candidate_response["info"])
         baseline_files = _file_facts(baseline_response["urls"])
         candidate_files = _file_facts(candidate_response["urls"])
-        baseline_dist = _requires_dist_map(baseline_info.get("requires_dist"))
-        candidate_dist = _requires_dist_map(candidate_info.get("requires_dist"))
-        dependency_names = sorted(set(baseline_dist) | set(candidate_dist))
+        baseline_requirements = _requires_dist_map(baseline_info.get("requires_dist"))
+        candidate_requirements = _requires_dist_map(candidate_info.get("requires_dist"))
+        dependency_names = sorted(set(baseline_requirements) | set(candidate_requirements))
+        baseline_filenames = {
+            str(distribution_file.get("filename")) for distribution_file in baseline_files
+        }
+        candidate_filenames = {
+            str(distribution_file.get("filename")) for distribution_file in candidate_files
+        }
+
+        requires_dist_diff: Json = {}
+        for dependency_name in dependency_names:
+            before_requirement = baseline_requirements.get(dependency_name)
+            after_requirement = candidate_requirements.get(dependency_name)
+            if before_requirement != after_requirement:
+                requires_dist_diff[dependency_name] = {
+                    "before": before_requirement,
+                    "after": after_requirement,
+                }
 
         requires_python_diff = {
             "before": baseline_info.get("requires_python"),
             "after": candidate_info.get("requires_python"),
         }
         files_diff = {
-            "added": sorted(
-                {str(f.get("filename")) for f in candidate_files}
-                - {str(f.get("filename")) for f in baseline_files}
-            ),
-            "removed": sorted(
-                {str(f.get("filename")) for f in baseline_files}
-                - {str(f.get("filename")) for f in candidate_files}
-            ),
+            "added": sorted(candidate_filenames - baseline_filenames),
+            "removed": sorted(baseline_filenames - candidate_filenames),
         }
         yank_diff = {
-            "before": any(bool(f.get("yanked")) for f in baseline_files),
-            "after": any(bool(f.get("yanked")) for f in candidate_files),
+            "before": any(
+                bool(distribution_file.get("yanked")) for distribution_file in baseline_files
+            ),
+            "after": any(
+                bool(distribution_file.get("yanked")) for distribution_file in candidate_files
+            ),
         }
         vulnerability_diff = {
             "before_count": len(baseline_response["vulnerabilities"]),
@@ -182,14 +196,7 @@ class MetadataEvidenceBuilder:
             "requires_python_diff": requires_python_diff
             if requires_python_diff["before"] != requires_python_diff["after"]
             else {},
-            "requires_dist_diff": {
-                name: {
-                    "before": baseline_dist.get(name),
-                    "after": candidate_dist.get(name),
-                }
-                for name in dependency_names
-                if baseline_dist.get(name) != candidate_dist.get(name)
-            },
+            "requires_dist_diff": requires_dist_diff,
             "files_diff": files_diff if files_diff["added"] or files_diff["removed"] else {},
             "yank_diff": yank_diff if yank_diff["before"] != yank_diff["after"] else {},
             "vulnerability_diff": vulnerability_diff
@@ -469,6 +476,7 @@ class PyPIEnricher:
         uploads = [
             value for item in candidate["urls"] if (value := item.get("upload_time_iso_8601"))
         ]
+        # This baseline defines every downstream diff; no predecessor makes evidence partial.
         baseline_version = select_baseline_version(
             project,
             event.release.version,
@@ -502,6 +510,7 @@ class PyPIEnricher:
                 }
             )
         context: Json = {"repository_mapping_confidence": "unavailable"}
+        # Any artifact comparison gap downgrades completeness and blocks a no-change conclusion.
         if baseline_version and self.byte_fetcher:
             baseline_artifact = _select_artifact(baseline["urls"])
             candidate_artifact = _select_artifact(candidate["urls"])

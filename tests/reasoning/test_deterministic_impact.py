@@ -91,6 +91,59 @@ def test_compiler_is_package_neutral_and_resolves_python_platform_and_support_fa
     assert "cffi" not in repr(compiled.gate_results).lower()
 
 
+def test_macos_target_change_merges_interpreters_and_abis_and_preserves_other_coverage():
+    release_event = event(package="native-bridge")
+    distribution = "native_bridge"
+    baseline = {
+        "info": {
+            "name": "native-bridge",
+            "version": "1.9.0",
+            "requires_python": ">=3.9",
+            "requires_dist": [],
+        },
+        "urls": [
+            _file(f"{distribution}-1.9.0-cp310-cp310-macosx_10_13_x86_64.whl"),
+            _file(f"{distribution}-1.9.0-cp310-abi3-macosx_10_13_x86_64.whl"),
+            _file(f"{distribution}-1.9.0-cp311-cp311-macosx_10_13_x86_64.whl"),
+            _file(f"{distribution}-1.9.0-cp310-cp310-manylinux_2_17_x86_64.whl"),
+        ],
+        "vulnerabilities": [],
+    }
+    candidate = {
+        "info": {
+            "name": "native-bridge",
+            "version": "2.0.0",
+            "requires_python": ">=3.9",
+            "requires_dist": [],
+        },
+        "urls": [
+            _file(f"{distribution}-2.0.0-cp310-cp310-macosx_10_15_x86_64.whl"),
+            _file(f"{distribution}-2.0.0-cp310-abi3-macosx_10_15_x86_64.whl"),
+            _file(f"{distribution}-2.0.0-cp311-cp311-macosx_10_15_x86_64.whl"),
+        ],
+        "vulnerabilities": [],
+    }
+    bundle = MetadataEvidenceBuilder().build(release_event, baseline, candidate)
+
+    compiled = compile_deterministic_impact(bundle)
+
+    assert compiled is not None
+    impacts = compiled.gate_results["deterministic_impact"]["impacts"]
+    macos_impact, residual_coverage = impacts
+    assert macos_impact["dimension"] == "platform"
+    assert "before 10.15" in macos_impact["affected_if"]
+    assert macos_impact["evidence_ids"] == [
+        "baseline.files.1.filename",
+        "baseline.files.0.filename",
+        "baseline.files.2.filename",
+        "candidate.files.1.filename",
+        "candidate.files.0.filename",
+        "candidate.files.2.filename",
+    ]
+    assert residual_coverage["dimension"] == "wheel_coverage"
+    assert residual_coverage["evidence_ids"] == ["baseline.files.3.filename"]
+
+
 def test_deterministic_impact_is_a_publishable_zero_model_terminal():
     release_event, bundle = _native_bundle("ffi-adapter")
     provider = FakeModelProvider([])

@@ -88,6 +88,7 @@ pipeline:
         value: 1
 
 output:
+  # The selected SQL transaction must commit before Connect acknowledges the terminal record.
   switch:
     retry_until_success: true
     cases:

@@ -232,6 +232,7 @@ class ReasoningWorker:
                 source_offset=record.offset,
             )
             self._ensure_record_lease(record, log_context)
+            # Contract failures and valid events converge on the same terminal publish path.
             if event is None:
                 terminal = self._invalid_release_failure(
                     payload_bytes, processing_attempt_id, outbound_context
@@ -244,6 +245,7 @@ class ReasoningWorker:
                         trace_context=outbound_context,
                     )
                 except ProcessingBackpressure as exc:
+                    # Backpressure retains the current record and leaves its offset uncommitted.
                     self._pending_record = record
                     failure_kind = "transient" if exc.retryable else "systemic"
                     self.telemetry.record_backpressure(retryable=exc.retryable)
@@ -260,6 +262,7 @@ class ReasoningWorker:
                     )
                     raise
             self._ensure_record_lease(record, log_context)
+            # Analysis has converged; terminal type now selects the destination topic.
             if isinstance(terminal, Finding):
                 topic, key = self.findings_topic, terminal.finding_id
                 terminal_fields = {

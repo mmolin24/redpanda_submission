@@ -122,6 +122,7 @@ processor_resources:
               root = content()
 
           - label: parse_and_extract_rss_items
+            # A document either fans out into release candidates or becomes one bounded ingest failure.
             try_catch:
               processors:
                 - label: parse_rss_xml
@@ -319,6 +320,7 @@ processor_resources:
                   value: 1
 
               - label: remove_irrelevant_release
+                # Deletion acknowledges valid releases outside the monitoring boundary.
                 mapping: |
                   root = if meta("relevance_decision") == "irrelevant" { deleted() } else { this }
 

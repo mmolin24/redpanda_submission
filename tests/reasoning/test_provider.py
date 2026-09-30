@@ -239,7 +239,11 @@ def test_exhausted_provider_error_retains_sanitized_request_and_all_attempts(
     monkeypatch.setenv("DEPLOYMENT_ENV", "local")
     monkeypatch.setenv("OBS_CAPTURE_MODEL_PAYLOADS", "true")
     client = Client()
-    client.responses.create = lambda **_body: (_ for _ in ()).throw(RateLimited("retry"))
+
+    def raise_rate_limited_error(**_body):
+        raise RateLimited("retry")
+
+    client.responses.create = raise_rate_limited_error
     provider = OpenAIResponsesProvider(
         client,
         max_attempts=2,
@@ -263,7 +267,11 @@ def test_exhausted_provider_error_retains_sanitized_request_and_all_attempts(
 
 def test_non_retryable_provider_error_preserves_systemic_classification():
     client = Client()
-    client.responses.create = lambda **_body: (_ for _ in ()).throw(BadRequest("invalid config"))
+
+    def raise_bad_request_for_invalid_config(**_body):
+        raise BadRequest("invalid config")
+
+    client.responses.create = raise_bad_request_for_invalid_config
     provider = OpenAIResponsesProvider(client, max_attempts=3, sleep=lambda _seconds: None)
 
     with pytest.raises(ProviderExhausted) as error:
@@ -283,7 +291,11 @@ def test_non_retryable_provider_error_preserves_systemic_classification():
 
 def test_keyboard_interrupt_is_not_swallowed_or_retried():
     client = Client()
-    client.responses.create = lambda **_body: (_ for _ in ()).throw(KeyboardInterrupt())
+
+    def raise_keyboard_interrupt(**_body):
+        raise KeyboardInterrupt
+
+    client.responses.create = raise_keyboard_interrupt
     provider = OpenAIResponsesProvider(client, sleep=lambda _seconds: None)
     with pytest.raises(KeyboardInterrupt):
         provider.complete(
@@ -318,7 +330,11 @@ def test_provider_spans_never_export_raw_exception_text_or_stacktraces():
     telemetry = WorkerTelemetry(tracer_provider.get_tracer("provider-sanitization-test"))
     client = Client()
     marker = "AUDIT_SECRET_MARKER"
-    client.responses.create = lambda **_body: (_ for _ in ()).throw(BadRequest(marker))
+
+    def raise_bad_request_with_marker(**_body):
+        raise BadRequest(marker)
+
+    client.responses.create = raise_bad_request_with_marker
     provider = OpenAIResponsesProvider(
         client,
         telemetry=telemetry,
